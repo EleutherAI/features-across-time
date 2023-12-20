@@ -1,0 +1,28 @@
+[project]
+name = "features-across-time"
+description = "Erasing concepts from neural representations with provable guarantees"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["interpretability", "explainable-ai"]
+license = {text = "MIT License"}
+dependencies = [
+    "concept-erasure",
+    "datasets",
+    "torch",
+]
+version = "0.0.1"
+
+[tool.pyright]
+include = ["scripts*"]
+reportPrivateImportUsage = false
+
+[tool.ruff]
+# Enable pycodestyle (`E`), Pyflakes (`F`), and isort (`I`) codes
+# See https://beta.ruff.rs/docs/rules/ for more possible rules
+select = ["E", "F", "I"]
+# Same as Black.
+line-length = 88
+# Avoid automatically removing unused imports in __init__.py files.
+# Such imports will be flagged with a dedicated message suggesting
+# that the import is either added to the module's __all__ symbol
+ignore-init-module-imports = true

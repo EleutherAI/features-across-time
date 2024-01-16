@@ -1,11 +1,12 @@
 import math
+import os
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
+import tqdm.auto as tqdm
 from transformers import GPTNeoXForCausalLM
 
 
@@ -26,7 +27,7 @@ class Pile:
         sample = self.data[start_index : self.index]
         self.index = start_index
 
-        return torch.from_numpy(sample.astype(np.int64))
+        return torch.from_numpy(sample.astype(np.int64)).cuda()
 
 
 def get_bow_sample(tokens: torch.tensor):
@@ -35,11 +36,11 @@ def get_bow_sample(tokens: torch.tensor):
     start_idx = 0
     for idx in zero_indices:
         if idx > start_idx:
-            perm = torch.randperm(idx - start_idx)
+            perm = torch.randperm(idx - start_idx).cuda()
             sample[start_idx:idx] = sample[start_idx:idx][perm]
         start_idx = idx + 1
     if start_idx < len(sample):
-        perm = torch.randperm(len(sample) - start_idx)
+        perm = torch.randperm(len(sample) - start_idx).cuda()
         sample[start_idx:] = sample[start_idx:][perm]
     return sample
 
@@ -65,33 +66,41 @@ def split_loss(loss: torch.tensor, zero_indices: torch.tensor):
 
 
 def worker(
-    gpu_idx: int, steps: list[int], model_name: str, pile_path: str, num_samples: int
+    gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
 ):
-    attention_mask = torch.ones((1, 2049), dtype=torch.int32)
+    torch.cuda.set_device(gpu_id)
+    attention_mask = torch.ones((1, 2049), dtype=torch.int32, device="cuda")
 
-    token_bow_losses = []
+    for step in tqdm.tqdm(steps, disable=gpu_id != 0):
+        output_path = Path.cwd() / "output" / f"checkpoint_token_data_{step}.pt"
+        if os.path.exists(output_path):
+            continue
 
-    for step in steps:
         pile = Pile(pile_path)  # currently same sample for all steps
-        model = GPTNeoXForCausalLM.from_pretrained(model_name, revision=f"step{step}")
-
+        model = GPTNeoXForCausalLM.from_pretrained(
+            model_name, revision=f"step{step}"
+        ).cuda()
+        token_losses = []
+        token_bow_losses = []
         for _ in range(num_samples):
             sample = next(pile)
-            zero_indices = torch.nonzero(sample == 0)
+            zero_indices = torch.nonzero(sample == 0).cuda()
+            outputs = model(sample.unsqueeze(0), attention_mask)
+            loss = cross_entropy_loss(sample, outputs.logits[0])
+            token_losses.extend(split_loss(loss, zero_indices))
+
             bow_sample = get_bow_sample(sample)
             bow_outputs = model(bow_sample.unsqueeze(0), attention_mask)
-            bow_loss = cross_entropy_loss(bow_sample.unsqueeze(0), bow_outputs.logits)
-            token_bow_losses.extend(split_loss(bow_loss), zero_indices)
+            bow_loss = cross_entropy_loss(bow_sample, bow_outputs.logits[0])
+            token_bow_losses.extend(split_loss(bow_loss, zero_indices))
 
-    print(token_bow_losses)
-    df = pd.DataFrame({"step": [], "bow_loss": []})
-    df.to_csv(Path.cwd() / "output" / f"checkpoint_token_data_{gpu_idx}")
+        torch.save((step, token_losses, token_bow_losses), output_path)
 
 
 def main():
     model_name = "EleutherAI/pythia-160m"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
-    num_samples = 30_000
+    num_samples = 50
 
     log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = [i for i in range(1000, 143000, 1000)]
@@ -104,12 +113,18 @@ def main():
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
 
-    num_gpus = 1
     print(f"Parallelising over {num_gpus} GPUs...")
+    mp.set_start_method("spawn")
+    processes = []
     for i in range(num_gpus):
-        mp.spawn(
-            worker, args=(step_indices[i], model_name, path, num_samples), nprocs=1
+        p = mp.Process(
+            target=worker, args=(i, step_indices[i], model_name, path, num_samples)
         )
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join()
 
 
 def test():

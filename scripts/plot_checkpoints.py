@@ -42,7 +42,7 @@ def main():
             "z": df["token_bow_mean_losses"] * 0.3366084909549386 / math.log(2),
         }
     )
-    # print((df["token_bow_mean_losses"] * 0.3366084909549386 / math.log(2)).min())
+
     fig = go.Figure(
         data=[heatmap],
     )
@@ -60,31 +60,17 @@ def main():
     steps = linear_steps  # log_steps +
 
     agg_means = []
-    agg_conf_intervals_bottom = []
-    agg_conf_intervals_top = []
 
     for step in steps:
         mean_bow_loss = df[df["step"] == step]["token_bow_mean_losses"]
-        token_bottom_conf_intervals = df[df["step"] == step][
-            "token_bottom_conf_intervals"
-        ]
-        token_top_conf_intervals = df[df["step"] == step]["token_top_conf_intervals"]
-
         agg_means.append(mean_bow_loss.mean())
-        agg_conf_intervals_bottom.append(token_bottom_conf_intervals.mean())
-        agg_conf_intervals_top.append(token_top_conf_intervals.mean())
 
     agg_df = pd.DataFrame(
         {
             "step": steps,
             "mean_agg_loss": agg_means,
-            "conf_bottom": agg_conf_intervals_bottom,
-            "conf_top": agg_conf_intervals_top,
         }
     )
-    agg_df.to_csv("agg_df.csv")
-
-    # agg_df = pd.read_csv('agg_df.csv')
 
     num_sequences = len(df[df["step"] == 1000]["token_bow_mean_losses"].tolist())
 
@@ -121,13 +107,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# def gradient_loss(means):
-#     derivatives = np.gradient(means)
-
-#     fig = px.line(derivatives)
-#     fig.save_image("Derivatives")
-#     # each point is (step, token index)
-#     # its value is the derivative of the loss wrt the log(index)
-#     # avg loss at each token index -> np.gradient(means)

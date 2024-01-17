@@ -63,12 +63,11 @@ def split_by_eod(loss: torch.Tensor, eod_indices: [torch.Tensor]) -> list[list]:
 
 def summary_stats(
     vectors: list[np.ndarray], target_length=2048
-) -> tuple[np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]]:
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     padded_vectors = [
         np.pad(v, (0, target_length - len(v)), constant_values=np.nan) for v in vectors
     ]
-    stacked_vectors = np.vstack(padded_vectors)
-
+    stacked_vectors = np.vstack(padded_vectors).astype(np.float64)
     means = np.nanmean(stacked_vectors, axis=0)
     standard_errors = stats.sem(stacked_vectors, axis=0, nan_policy="omit")
     conf_intervals = stats.norm.interval(0.95, loc=means, scale=standard_errors)

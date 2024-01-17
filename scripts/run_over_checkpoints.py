@@ -32,16 +32,12 @@ class Pile:
         return torch.from_numpy(sample.astype(np.int64)).reshape(self.batch, -1).cuda()
 
 
-def get_bow_sample(tokens: torch.Tensor):
+def get_bow_sample(tokens: torch.Tensor, eod_indices: list[torch.Tensor]):
     """Shuffle tokens within documents. The end of document token is 0."""
     sample = tokens.clone()
     for i in range(len(sample)):
-        eod_indices = torch.nonzero(sample[i] == 0).cuda()
-        if eod_indices.numel():
-            eod_indices = eod_indices[:, 0]
-
         start_idx = 0
-        for idx in eod_indices:
+        for idx in eod_indices[i]:
             if idx > start_idx:
                 perm = torch.randperm(int(idx - start_idx)).cuda()
                 sample[i, start_idx:idx] = sample[i, start_idx:idx][perm]
@@ -52,12 +48,11 @@ def get_bow_sample(tokens: torch.Tensor):
     return sample
 
 
-def split_by_eod(loss: torch.Tensor) -> list[list]:
+def split_by_eod(loss: torch.Tensor, eod_indices: [torch.Tensor]) -> list[list]:
     result = []
     start_idx = 0
     for i in range(loss.shape[0]):
-        eod_indices = torch.nonzero(loss[i] == 0).cuda()
-        for zero_idx in eod_indices:
+        for zero_idx in eod_indices[i]:  # no loss for final token
             if zero_idx > start_idx:
                 result.append(loss[i, start_idx : zero_idx + 1].cpu().numpy())
             start_idx = zero_idx + 1
@@ -94,7 +89,6 @@ def worker(
     torch.cuda.set_device(gpu_id)
     step_data = []
     token_indices = []
-    # token_losses = []
     token_bow_losses = []
     token_bottom_conf_intervals, token_top_conf_intervals = [], []
     for step in tqdm.tqdm(steps, position=gpu_id):
@@ -106,14 +100,19 @@ def worker(
         step_losses = []
         for _ in range(num_samples):
             sample = next(pile)
-            bow_sample = get_bow_sample(sample)
+            eod_indices = [torch.where(sample[i] == 0)[0] for i in range(len(sample))]
+            bow_sample = get_bow_sample(sample, eod_indices)
             bow_outputs = model(bow_sample)
             bow_loss = torch.nn.functional.cross_entropy(
                 bow_outputs.logits[:, :-1].reshape(batch * 2048, -1),
                 bow_sample[:, 1:].reshape(batch * 2048),
                 reduction="none",
             ).reshape(batch, 2048)
-            step_losses.extend(split_by_eod(bow_loss))
+
+            eod_indices = [
+                torch.where(sample[i, :-1] == 0)[0] for i in range(len(sample))
+            ]
+            step_losses.extend(split_by_eod(bow_loss, eod_indices))
 
         mean_bow_sequence_loss, conf_intervals = summary_stats(step_losses)
         token_bow_losses.extend(mean_bow_sequence_loss)
@@ -167,22 +166,6 @@ def main():
 
     for p in processes:
         p.join()
-
-
-def test():
-    tensor = torch.tensor(
-        [
-            [0, 1, 5, 3, 0, 5, 2, 0, 2],
-            [0, 1, 5, 3, 0, 5, 0, 0, 2],
-            [0, 1, 5, 3, 0, 5, 0, 0, 2],
-        ]
-    ).cuda()
-
-    print(get_bow_sample(tensor))
-    print(get_bow_sample(tensor))
-    print(get_bow_sample(tensor))
-
-    # print(split_loss(torch.tensor([0, 1, 3, 0, 1, 0])))
 
 
 if __name__ == "__main__":

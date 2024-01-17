@@ -1,3 +1,4 @@
+import math
 import os
 import pickle
 from pathlib import Path
@@ -38,13 +39,16 @@ def main():
         {
             "x": df["step"],
             "y": df["index"],
-            "z": df["token_bow_mean_losses"],
+            "z": df["token_bow_mean_losses"] * 0.3366084909549386 / math.log(2),
         }
     )
-    fig = go.Figure(data=[heatmap])
+    # print((df["token_bow_mean_losses"] * 0.3366084909549386 / math.log(2)).min())
+    fig = go.Figure(
+        data=[heatmap],
+    )
     fig.update_layout(
         {
-            "title": "Mean loss on shuffled sequences over training steps",
+            "title": "Mean BPB on shuffled sequences over training steps",
             "yaxis_title": "Token index",
             "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
         }

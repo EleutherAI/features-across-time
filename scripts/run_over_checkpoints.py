@@ -85,18 +85,29 @@ def worker(
     torch.cuda.set_device(gpu_id)
     step_data = []
     token_indices = []
-    token_bow_losses = []
-    token_bottom_conf_intervals, token_top_conf_intervals = [], []
+    losses = []
+    bow_losses = []
+    bottom_conf_intervals, top_conf_intervals = [], []
+    bow_bottom_conf_intervals, bow_top_conf_intervals = [], []
     for step in tqdm.tqdm(steps, position=gpu_id):
         pile = Pile(pile_path, batch)
         model = GPTNeoXForCausalLM.from_pretrained(
             model_name, revision=f"step{step}", torch_dtype="auto"
         ).cuda()
 
+        step_bow_losses = []
         step_losses = []
         for _ in range(num_samples // batch):
             sample = next(pile)
             eod_indices = [torch.where(sample[i] == 0)[0] for i in range(len(sample))]
+            outputs = model(sample)
+            loss = torch.nn.functional.cross_entropy(
+                outputs.logits[:, :-1].reshape(batch * 2048, -1),
+                sample[:, 1:].reshape(batch * 2048),
+                reduction="none",
+            ).reshape(batch, 2048)
+            step_losses.extend(split_by_eod(loss, eod_indices))
+
             bow_sample = get_bow_sample(sample, eod_indices)
             bow_outputs = model(bow_sample)
             bow_loss = torch.nn.functional.cross_entropy(
@@ -108,12 +119,17 @@ def worker(
             eod_indices = [
                 torch.where(sample[i, :-1] == 0)[0] for i in range(len(sample))
             ]
-            step_losses.extend(split_by_eod(bow_loss, eod_indices))
+            step_bow_losses.extend(split_by_eod(bow_loss, eod_indices))
 
-        mean_bow_sequence_loss, conf_intervals = summary_stats(step_losses)
-        token_bow_losses.extend(mean_bow_sequence_loss)
-        token_bottom_conf_intervals.extend(conf_intervals[0])
-        token_top_conf_intervals.extend(conf_intervals[1])
+        mean_bow_sequence_loss, bow_conf_intervals = summary_stats(step_bow_losses)
+        bow_losses.extend(mean_bow_sequence_loss)
+        bow_bottom_conf_intervals.extend(bow_conf_intervals[0])
+        bow_top_conf_intervals.extend(bow_conf_intervals[1])
+
+        mean_sequence_loss, conf_intervals = summary_stats(step_losses)
+        losses.extend(mean_sequence_loss)
+        bottom_conf_intervals.extend(conf_intervals[0])
+        top_conf_intervals.extend(conf_intervals[1])
 
         step_data.extend([step] * len(mean_bow_sequence_loss))
         token_indices.extend(list(range(2048)))
@@ -122,9 +138,12 @@ def worker(
         {
             "step": step_data,
             "index": token_indices,
-            "token_bow_mean_losses": token_bow_losses,
-            "token_bottom_conf_intervals": token_bottom_conf_intervals,
-            "token_top_conf_intervals": token_top_conf_intervals,
+            "mean_losses": losses,
+            "bottom_conf_intervals": bottom_conf_intervals,
+            "top_conf_intervals": top_conf_intervals,
+            "token_bow_mean_losses": bow_losses,
+            "token_bottom_conf_intervals": bow_bottom_conf_intervals,
+            "token_top_conf_intervals": bow_top_conf_intervals,
         }
     )
 
@@ -133,7 +152,7 @@ def worker(
 
 
 def main():
-    model_name = "EleutherAI/pythia-160m-v0"
+    model_name = "EleutherAI/pythia-160m"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     num_samples = 4000
 

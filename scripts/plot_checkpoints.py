@@ -33,47 +33,42 @@ def main():
                 dfs.append(pickle.load(f))
 
     df = pd.concat(dfs)
-    print(df.head())
+
+    heatmap = go.Heatmap(
+        {
+            "x": df["step"],
+            "y": df["index"],
+            "z": df["token_bow_mean_losses"],
+        }
+    )
+    fig = go.Figure(data=[heatmap])
+    fig.update_layout(
+        {
+            "title": "Mean loss on shuffled sequences over training steps",
+            "yaxis_title": "Token index",
+            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+        }
+    )
+    fig.write_image(Path.cwd() / "images" / "token_losses.png")
 
     # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = [i for i in range(1000, 144000, 1000)]
     steps = linear_steps  # log_steps +
-
-    token_steps = []
-    token_means = []
-    token_indices = []
-    token_conf_intervals_bottom = []
-    token_conf_intervals_top = []
 
     agg_means = []
     agg_conf_intervals_bottom = []
     agg_conf_intervals_top = []
 
     for step in steps:
-        token_bow_losses = df[df["step"] == step]["token_bow_losses"].tolist()
-        vectors = [np.array(item) for item in token_bow_losses]
-        mean_bow_loss, conf_intervals = summary_stats(vectors)
-
-        token_means.extend(mean_bow_loss)
-        token_conf_intervals_bottom.extend(conf_intervals[0])
-        token_conf_intervals_top.extend(conf_intervals[1])
-        token_indices.extend(list(range(len(mean_bow_loss))))
-        token_steps.extend([step] * len(mean_bow_loss))
+        mean_bow_loss = df[df["step"] == step]["token_bow_mean_losses"]
+        token_bottom_conf_intervals = df[df["step"] == step][
+            "token_bottom_conf_intervals"
+        ]
+        token_top_conf_intervals = df[df["step"] == step]["token_top_conf_intervals"]
 
         agg_means.append(mean_bow_loss.mean())
-        agg_conf_intervals_bottom.append(conf_intervals[0].mean())
-        agg_conf_intervals_top.append(conf_intervals[1].mean())
-
-    per_token_df = pd.DataFrame(
-        {
-            "step": token_steps,
-            "index": token_indices,
-            "mean_agg_loss": token_means,
-            "conf_bottom": token_conf_intervals_bottom,
-            "conf_top": token_conf_intervals_top,
-        }
-    )
-    print(per_token_df.head())
+        agg_conf_intervals_bottom.append(token_bottom_conf_intervals.mean())
+        agg_conf_intervals_top.append(token_top_conf_intervals.mean())
 
     agg_df = pd.DataFrame(
         {
@@ -83,14 +78,11 @@ def main():
             "conf_top": agg_conf_intervals_top,
         }
     )
-    print(agg_df.head())
-
     agg_df.to_csv("agg_df.csv")
-    per_token_df.to_csv("per_token_df.csv")
-    # agg_df = pd.read_csv('agg_df.csv')
-    # per_token_df = pd.read_csv('per_token_df.csv')
 
-    num_sequences = len(df[df["step"] == 1000]["token_bow_losses"].tolist())
+    # agg_df = pd.read_csv('agg_df.csv')
+
+    num_sequences = len(df[df["step"] == 1000]["token_bow_mean_losses"].tolist())
 
     fig = px.line(agg_df, x="step", y="mean_agg_loss")
     fig.update_layout(
@@ -121,16 +113,6 @@ def main():
         )
     )
     fig.write_image(Path.cwd() / "images" / "agg_losses.png")
-
-    heatmap = go.Heatmap(
-        {
-            "x": per_token_df["step"],
-            "y": per_token_df["index"],
-            "z": per_token_df["mean_agg_loss"],
-        }
-    )
-    fig = go.Figure(data=[heatmap])
-    fig.write_image(Path.cwd() / "images" / "token_losses.png")
 
 
 if __name__ == "__main__":

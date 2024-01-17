@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import tqdm.auto as tqdm
+from scipy import stats
 from transformers import GPTNeoXForCausalLM
 
 
@@ -32,14 +33,15 @@ class Pile:
 
 
 def get_bow_sample(tokens: torch.Tensor):
+    """Shuffle tokens within documents. The end of document token is 0."""
     sample = tokens.clone()
     for i in range(len(sample)):
-        zero_indices = torch.nonzero(sample[i] == 0).cuda()
-        if zero_indices.numel():
-            zero_indices = zero_indices[:, 0]
+        eod_indices = torch.nonzero(sample[i] == 0).cuda()
+        if eod_indices.numel():
+            eod_indices = eod_indices[:, 0]
 
         start_idx = 0
-        for idx in zero_indices:
+        for idx in eod_indices:
             if idx > start_idx:
                 perm = torch.randperm(int(idx - start_idx)).cuda()
                 sample[i, start_idx:idx] = sample[i, start_idx:idx][perm]
@@ -50,16 +52,35 @@ def get_bow_sample(tokens: torch.Tensor):
     return sample
 
 
-def split_loss(loss: torch.Tensor, zero_indices: torch.Tensor) -> list[list]:
+def split_by_eod(loss: torch.Tensor) -> list[list]:
     result = []
     start_idx = 0
-    for zero_idx in zero_indices:
-        if zero_idx > start_idx:
-            result.append(loss[start_idx : zero_idx + 1].cpu().numpy())
-        start_idx = zero_idx + 1
-    if start_idx < len(loss):
-        result.append(loss[start_idx:].cpu().numpy())
+    for i in range(loss.shape[0]):
+        eod_indices = torch.nonzero(loss[i] == 0).cuda()
+        for zero_idx in eod_indices:
+            if zero_idx > start_idx:
+                result.append(loss[i, start_idx : zero_idx + 1].cpu().numpy())
+            start_idx = zero_idx + 1
+        if start_idx < len(loss):
+            result.append(loss[i, start_idx:].cpu().numpy())
     return result
+
+
+def summary_stats(
+    vectors: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]]:
+    max_length = max(len(v) for v in vectors)
+
+    padded_vectors = [
+        np.pad(v, (0, max_length - len(v)), constant_values=np.nan) for v in vectors
+    ]
+    stacked_vectors = np.vstack(padded_vectors)
+
+    means = np.nanmean(stacked_vectors, axis=0)
+    standard_errors = stats.sem(stacked_vectors, axis=0, nan_policy="omit")
+    conf_intervals = stats.norm.interval(0.95, loc=means, scale=standard_errors)
+
+    return means, conf_intervals
 
 
 # compile
@@ -72,28 +93,19 @@ def worker(
 
     torch.cuda.set_device(gpu_id)
     step_data = []
-    token_losses = []
+    token_indices = []
+    # token_losses = []
     token_bow_losses = []
+    token_bottom_conf_intervals, token_top_conf_intervals = [], []
     for step in tqdm.tqdm(steps, position=gpu_id):
         pile = Pile(pile_path, batch)
         model = GPTNeoXForCausalLM.from_pretrained(
             model_name, revision=f"step{step}", torch_dtype="auto"
         ).cuda()
 
+        step_losses = []
         for _ in range(num_samples):
             sample = next(pile)
-            zero_indices = torch.nonzero(sample.flatten(0) == 0).cuda()
-
-            outputs = model(sample)
-
-            loss = torch.nn.functional.cross_entropy(
-                outputs.logits[:, :-1].reshape(batch * 2048, -1),
-                sample[:, 1:].reshape(batch * 2048),
-                reduction="none",
-            ).reshape(batch, 2048)
-            sequence_losses = split_loss(loss, zero_indices)
-            token_losses.extend(sequence_losses)
-
             bow_sample = get_bow_sample(sample)
             bow_outputs = model(bow_sample)
             bow_loss = torch.nn.functional.cross_entropy(
@@ -101,15 +113,24 @@ def worker(
                 bow_sample[:, 1:].reshape(batch * 2048),
                 reduction="none",
             ).reshape(batch, 2048)
-            bow_sequence_losses = split_loss(bow_loss, zero_indices)
-            token_bow_losses.extend(bow_sequence_losses)
-            step_data.extend([step] * len(bow_sequence_losses))
+            step_losses.extend(split_by_eod(bow_loss))
+
+        mean_bow_sequence_loss, conf_intervals = summary_stats(step_losses)
+        token_bow_losses.extend(mean_bow_sequence_loss)
+        token_bottom_conf_intervals.extend(conf_intervals[0])
+        token_top_conf_intervals.extend(conf_intervals[1])
+
+        step_data.extend([step] * len(mean_bow_sequence_loss))
+        token_indices.extend(list(range(2048)))
 
     df = pd.DataFrame(
         {
             "step": step_data,
-            "token_loss": token_losses,
-            "token_bow_losses": token_bow_losses,
+            "index": token_indices,
+            # "token_loss": token_losses,
+            "token_bow_mean_losses": token_bow_losses,
+            "token_bottom_conf_intervals": token_bottom_conf_intervals,
+            "token_top_conf_intervals": token_top_conf_intervals,
         }
     )
 
@@ -120,7 +141,7 @@ def worker(
 def main():
     model_name = "EleutherAI/pythia-160m-v0"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
-    num_samples = 500
+    num_samples = 100
 
     # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = [i for i in range(1000, 144000, 1000)]
@@ -161,7 +182,6 @@ def test():
     print(get_bow_sample(tensor))
     print(get_bow_sample(tensor))
 
-    # zero_indices = torch.tensor([0, 3, 5])
     # print(split_loss(torch.tensor([0, 1, 3, 0, 1, 0])))
 
 

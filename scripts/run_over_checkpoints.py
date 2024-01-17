@@ -75,7 +75,6 @@ def summary_stats(
     return means, conf_intervals
 
 
-# compile
 @torch.inference_mode()
 def worker(
     gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
@@ -123,7 +122,6 @@ def worker(
         {
             "step": step_data,
             "index": token_indices,
-            # "token_loss": token_losses,
             "token_bow_mean_losses": token_bow_losses,
             "token_bottom_conf_intervals": token_bottom_conf_intervals,
             "token_top_conf_intervals": token_top_conf_intervals,

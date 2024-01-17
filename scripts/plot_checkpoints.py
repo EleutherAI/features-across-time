@@ -102,7 +102,7 @@ def main():
             y=agg_df["conf_top"],
             fill=None,
             mode="lines",
-            line=dict(color="lightgrey"),
+            line=dict(color="powderblue"),
             showlegend=False,
         )
     )
@@ -112,7 +112,7 @@ def main():
             y=agg_df["conf_bottom"],
             fill="tonexty",
             mode="lines",
-            line=dict(color="lightgrey"),
+            line=dict(color="powderblue"),
             showlegend=False,
         )
     )

@@ -62,12 +62,10 @@ def split_by_eod(loss: torch.Tensor, eod_indices: [torch.Tensor]) -> list[list]:
 
 
 def summary_stats(
-    vectors: list[np.ndarray],
+    vectors: list[np.ndarray], target_length=2048
 ) -> tuple[np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    max_length = max(len(v) for v in vectors)
-
     padded_vectors = [
-        np.pad(v, (0, max_length - len(v)), constant_values=np.nan) for v in vectors
+        np.pad(v, (0, target_length - len(v)), constant_values=np.nan) for v in vectors
     ]
     stacked_vectors = np.vstack(padded_vectors)
 
@@ -98,7 +96,7 @@ def worker(
         ).cuda()
 
         step_losses = []
-        for _ in range(num_samples):
+        for _ in range(num_samples // batch):
             sample = next(pile)
             eod_indices = [torch.where(sample[i] == 0)[0] for i in range(len(sample))]
             bow_sample = get_bow_sample(sample, eod_indices)
@@ -140,7 +138,7 @@ def worker(
 def main():
     model_name = "EleutherAI/pythia-160m-v0"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
-    num_samples = 100
+    num_samples = 4000
 
     # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = [i for i in range(1000, 144000, 1000)]

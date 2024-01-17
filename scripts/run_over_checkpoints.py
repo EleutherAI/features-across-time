@@ -1,8 +1,9 @@
 import math
-import os
+import pickle
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -30,22 +31,21 @@ class Pile:
         return torch.from_numpy(sample.astype(np.int64)).cuda()
 
 
-def get_bow_sample(tokens: torch.tensor):
+def get_bow_sample(tokens: torch.Tensor, zero_indices: torch.Tensor):
     sample = tokens.clone()
-    zero_indices = torch.where(sample == 0)[0]
     start_idx = 0
     for idx in zero_indices:
         if idx > start_idx:
-            perm = torch.randperm(idx - start_idx).cuda()
+            perm = torch.randperm(int(idx - start_idx)).cuda()
             sample[start_idx:idx] = sample[start_idx:idx][perm]
         start_idx = idx + 1
     if start_idx < len(sample):
-        perm = torch.randperm(len(sample) - start_idx).cuda()
+        perm = torch.randperm(int(len(sample) - start_idx)).cuda()
         sample[start_idx:] = sample[start_idx:][perm]
     return sample
 
 
-def cross_entropy_loss(tokens, logits):
+def cross_entropy_loss(tokens: torch.Tensor, logits: torch.Tensor):
     log_probs = F.log_softmax(logits, dim=-1)
     predicted_log_probs = log_probs[..., :-1, :].gather(
         dim=-1, index=tokens[..., 1:, None]
@@ -53,61 +53,84 @@ def cross_entropy_loss(tokens, logits):
     return -predicted_log_probs
 
 
-def split_loss(loss: torch.tensor, zero_indices: torch.tensor):
+def split_loss(loss: torch.Tensor, zero_indices: torch.Tensor) -> list[list]:
     result = []
     start_idx = 0
     for zero_idx in zero_indices:
         if zero_idx > start_idx:
-            result.append(loss[start_idx : zero_idx + 1])
+            result.append(loss[start_idx : zero_idx + 1].tolist())
         start_idx = zero_idx + 1
     if start_idx < len(loss):
-        result.append(loss[start_idx:])
+        result.append(loss[start_idx:].tolist())
     return result
 
 
+# compile
+
+
+@torch.inference_mode()
 def worker(
     gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
 ):
+    output_path = Path.cwd() / "output" / f"checkpoint_token_data_{gpu_id}.pkl"
+    # if os.path.exists(output_path):
+    #     return
+
     torch.cuda.set_device(gpu_id)
-    attention_mask = torch.ones((1, 2049), dtype=torch.int32, device="cuda")
-
-    for step in tqdm.tqdm(steps, disable=gpu_id != 0):
-        output_path = Path.cwd() / "output" / f"checkpoint_token_data_{step}.pt"
-        if os.path.exists(output_path):
-            continue
-
-        pile = Pile(pile_path)  # currently same sample for all steps
+    step_data = []
+    token_losses = []
+    token_bow_losses = []
+    for step in tqdm.tqdm(steps, position=gpu_id):
+        if step == 47000:
+            print("here")
+        pile = Pile(pile_path)
         model = GPTNeoXForCausalLM.from_pretrained(
-            model_name, revision=f"step{step}"
+            model_name, revision=f"step{step}", torch_dtype="auto"
         ).cuda()
-        token_losses = []
-        token_bow_losses = []
+
         for _ in range(num_samples):
-            sample = next(pile)
+            sample = next(pile)  # TODO BATCH
             zero_indices = torch.nonzero(sample == 0).cuda()
-            outputs = model(sample.unsqueeze(0), attention_mask)
-            loss = cross_entropy_loss(sample, outputs.logits[0])
-            token_losses.extend(split_loss(loss, zero_indices))
+            outputs = model(sample.unsqueeze(0))
+            loss = torch.nn.functional.cross_entropy(
+                outputs.logits[0, :-1], sample[1:], reduction="none"
+            )
+            sequence_losses = split_loss(loss, zero_indices)
+            token_losses.extend(sequence_losses)
 
-            bow_sample = get_bow_sample(sample)
-            bow_outputs = model(bow_sample.unsqueeze(0), attention_mask)
-            bow_loss = cross_entropy_loss(bow_sample, bow_outputs.logits[0])
-            token_bow_losses.extend(split_loss(bow_loss, zero_indices))
+            bow_sample = get_bow_sample(sample, zero_indices)
+            bow_outputs = model(bow_sample.unsqueeze(0))
+            bow_loss = torch.nn.functional.cross_entropy(
+                bow_outputs.logits[0, :-1], bow_sample[1:], reduction="none"
+            )
+            bow_sequence_losses = split_loss(bow_loss, zero_indices)
+            token_bow_losses.extend(bow_sequence_losses)
+            step_data.extend([step] * len(bow_sequence_losses))
 
-        torch.save((step, token_losses, token_bow_losses), output_path)
+    df = pd.DataFrame(
+        {
+            "step": step_data,
+            "token_loss": token_losses,
+            "token_bow_losses": token_bow_losses,
+        }
+    )
+
+    with open(output_path, "wb") as f:
+        pickle.dump(df, f)
 
 
 def main():
-    model_name = "EleutherAI/pythia-160m"
+    model_name = "EleutherAI/pythia-160m-v0"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     num_samples = 50
 
-    log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
-    linear_steps = [i for i in range(1000, 143000, 1000)]
-    steps = log_steps + linear_steps
+    # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
+    linear_steps = [i for i in range(1000, 144000, 1000)]
+    # steps = log_steps + linear_steps
+    steps = linear_steps
 
     num_gpus = torch.cuda.device_count()
-    max_steps_per_chunk = math.ceil(len(steps) // num_gpus)
+    max_steps_per_chunk = math.ceil(len(steps) / num_gpus)
     step_indices = [
         steps[i : i + max_steps_per_chunk]
         for i in range(0, len(steps), max_steps_per_chunk)

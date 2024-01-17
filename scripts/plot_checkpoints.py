@@ -1,17 +1,16 @@
 import os
+import pickle
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import torch
 from scipy import stats
 
 
 def mean_vector(
-    losses: list[torch.tensor],
+    vectors: list[np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    vectors = [loss.detach().numpy() for loss in losses]
     max_length = max(len(v) for v in vectors)
 
     confidence_level = 0.95
@@ -30,37 +29,60 @@ def mean_vector(
     return means, standard_errors, conf_intervals
 
 
+# def gradient_loss(means):
+#     derivatives = np.gradient(means)
+
+#     fig = px.line(derivatives)
+#     fig.save_image("Derivatives")
+#     # each point is (step, token index)
+#     # its value is the derivative of the loss wrt the log(index)
+#     # avg loss at each token index -> np.gradient(means)
+
+
 def main():
-    steps = []
-    mean_per_token_losses = []
-    standard_error_per_token = []
-    mean_aggregated_losses = []
+    dfs = []
     for root, dirs, files in os.walk("output"):
         for file in files:
-            (step, token_losses, token_bow_losses) = torch.load(
-                os.path.join(root, file)
-            )
-            mean_bow_loss, standard_errors, conf_intervals = mean_vector(
-                token_bow_losses
-            )
+            with open(os.path.join(root, file), "rb") as f:
+                dfs.append(pickle.load(f))
 
-            standard_error_per_token.append(standard_errors)
-            steps.append(step)
-            mean_per_token_losses.append(mean_bow_loss.detach().numpy())
-            mean_aggregated_losses.append(mean_per_token_losses[-1].mean())
+            # dfs.append(pd.read_csv(
+            #     os.path.join(root, file)
+            # ))
 
-            mean_token_loss, standard_errors, conf_intervals = mean_vector(token_losses)
+    df = pd.concat(dfs)
+    print(df.head())
+    # step
+    # token_loss
+    # token_bow_losses
+    # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
+    linear_steps = [i for i in range(1000, 144000, 1000)]
+    steps = linear_steps  # log_steps +
+
+    per_token_means = []
+    per_token_conf_intervals_left = []
+    per_token_conf_intervals_right = []
+    for step in steps:
+        token_bow_losses = df[df["step"] == step]["token_bow_losses"].tolist()
+        if len(token_bow_losses) == 0:
+            print(step)
+        vectors = [np.array(item) for item in token_bow_losses]
+        mean_bow_loss, standard_errors, conf_intervals = mean_vector(vectors)
+        per_token_means.append(mean_bow_loss.mean())
+        per_token_conf_intervals_left.append(conf_intervals[0].mean(-1))
+        per_token_conf_intervals_right.append(conf_intervals[1].mean(-1))
 
     df = pd.DataFrame(
         {
             "step": steps,
-            "mean_per_token_loss": mean_per_token_losses,
-            "mean_aggregated_loss": mean_aggregated_losses,
+            "mean_aggregated_loss": per_token_means,
+            "conf_left": per_token_conf_intervals_left,
+            "conf_right": per_token_conf_intervals_right,
         }
     )
 
     fig = px.line(df, x="step", y="mean_aggregated_loss")
-    fig.write_image(Path.cwd() / "output" / "image.png")
+    fig.write_image(Path.cwd() / "images" / "image.png")
 
 
 if __name__ == "__main__":

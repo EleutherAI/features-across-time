@@ -36,7 +36,7 @@ def get_bow_sample(tokens: torch.Tensor):
     for i in range(len(sample)):
         zero_indices = torch.nonzero(sample[i] == 0).cuda()
         if zero_indices.numel():
-            zero_indices = zero_indices[0]
+            zero_indices = zero_indices[:, 0]
 
         start_idx = 0
         for idx in zero_indices:
@@ -47,7 +47,7 @@ def get_bow_sample(tokens: torch.Tensor):
         if start_idx < len(sample[i]):
             perm = torch.randperm(int(len(sample[i]) - start_idx)).cuda()
             sample[i, start_idx:] = sample[i, start_idx:][perm]
-        return sample
+    return sample
 
 
 def split_loss(loss: torch.Tensor, zero_indices: torch.Tensor) -> list[list]:
@@ -55,10 +55,10 @@ def split_loss(loss: torch.Tensor, zero_indices: torch.Tensor) -> list[list]:
     start_idx = 0
     for zero_idx in zero_indices:
         if zero_idx > start_idx:
-            result.append(loss[start_idx : zero_idx + 1].tolist())
+            result.append(loss[start_idx : zero_idx + 1].cpu().numpy())
         start_idx = zero_idx + 1
     if start_idx < len(loss):
-        result.append(loss[start_idx:].tolist())
+        result.append(loss[start_idx:].cpu().numpy())
     return result
 
 
@@ -68,13 +68,14 @@ def worker(
     gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
 ):
     output_path = Path.cwd() / "output" / f"checkpoint_token_data_{gpu_id}.pkl"
+    batch = 4
 
     torch.cuda.set_device(gpu_id)
     step_data = []
     token_losses = []
     token_bow_losses = []
     for step in tqdm.tqdm(steps, position=gpu_id):
-        pile = Pile(pile_path, batch=4)
+        pile = Pile(pile_path, batch)
         model = GPTNeoXForCausalLM.from_pretrained(
             model_name, revision=f"step{step}", torch_dtype="auto"
         ).cuda()
@@ -82,23 +83,24 @@ def worker(
         for _ in range(num_samples):
             sample = next(pile)
             zero_indices = torch.nonzero(sample.flatten(0) == 0).cuda()
+
             outputs = model(sample)
 
             loss = torch.nn.functional.cross_entropy(
-                outputs.logits[:, :-1].flatten(0, 1),
-                sample[:, 1:].flatten(0, 1),
+                outputs.logits[:, :-1].reshape(batch * 2048, -1),
+                sample[:, 1:].reshape(batch * 2048),
                 reduction="none",
-            )
+            ).reshape(batch, 2048)
             sequence_losses = split_loss(loss, zero_indices)
             token_losses.extend(sequence_losses)
 
             bow_sample = get_bow_sample(sample)
             bow_outputs = model(bow_sample)
             bow_loss = torch.nn.functional.cross_entropy(
-                bow_outputs.logits[:, :-1].flatten(0, 1),
-                bow_sample[:, 1:].flatten(0, 1),
+                bow_outputs.logits[:, :-1].reshape(batch * 2048, -1),
+                bow_sample[:, 1:].reshape(batch * 2048),
                 reduction="none",
-            )
+            ).reshape(batch, 2048)
             bow_sequence_losses = split_loss(bow_loss, zero_indices)
             token_bow_losses.extend(bow_sequence_losses)
             step_data.extend([step] * len(bow_sequence_losses))
@@ -144,6 +146,23 @@ def main():
 
     for p in processes:
         p.join()
+
+
+def test():
+    tensor = torch.tensor(
+        [
+            [0, 1, 5, 3, 0, 5, 2, 0, 2],
+            [0, 1, 5, 3, 0, 5, 0, 0, 2],
+            [0, 1, 5, 3, 0, 5, 0, 0, 2],
+        ]
+    ).cuda()
+
+    print(get_bow_sample(tensor))
+    print(get_bow_sample(tensor))
+    print(get_bow_sample(tensor))
+
+    # zero_indices = torch.tensor([0, 3, 5])
+    # print(split_loss(torch.tensor([0, 1, 3, 0, 1, 0])))
 
 
 if __name__ == "__main__":

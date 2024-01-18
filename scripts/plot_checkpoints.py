@@ -27,14 +27,44 @@ def summary_stats(
 
 
 def main():
+    bigram_dfs = []
+    for root, dirs, files in os.walk("output"):
+        for file in files:
+            if "bigram" in file:
+                with open(os.path.join(root, file), "rb") as f:
+                    bigram_dfs.append(pickle.load(f))
+
+    bigram_df = pd.concat(bigram_dfs)
+    print(bigram_df.head())
+    heatmap = go.Heatmap(
+        {
+            "x": bigram_df["step"],
+            "y": bigram_df["index"],
+            "z": bigram_df["mean_kl_divergence"],
+        }
+    )
+    fig = go.Figure(
+        data=[heatmap],
+    )
+    fig.update_layout(
+        {
+            "title": "Mean KL divergence over training steps",
+            "yaxis_title": "Token index",
+            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+        }
+    )
+    fig.write_image(Path.cwd() / "images" / "bigram_kld.png")
+
     dfs = []
     for root, dirs, files in os.walk("output"):
         for file in files:
-            with open(os.path.join(root, file), "rb") as f:
-                dfs.append(pickle.load(f))
+            if "token" in file:
+                with open(os.path.join(root, file), "rb") as f:
+                    dfs.append(pickle.load(f))
 
     df = pd.concat(dfs)
 
+    print(df.head())
     heatmap = go.Heatmap(
         {
             "x": df["step"],
@@ -60,15 +90,22 @@ def main():
     steps = linear_steps  # log_steps +
 
     agg_means = []
-
+    mean_conf_bottoms = []
+    mean_conf_tops = []
     for step in steps:
         mean_bow_loss = df[df["step"] == step]["token_bow_mean_losses"]
+        mean_conf_bottoms.append(
+            df[df["step"] == step]["token_bottom_conf_intervals"].mean()
+        )
+        mean_conf_tops.append(df[df["step"] == step]["token_top_conf_intervals"].mean())
         agg_means.append(mean_bow_loss.mean())
 
     agg_df = pd.DataFrame(
         {
             "step": steps,
             "mean_agg_loss": agg_means,
+            "mean_conf_bottom": mean_conf_bottoms,
+            "mean_conf_top": mean_conf_tops,
         }
     )
 
@@ -85,7 +122,7 @@ def main():
     fig.add_traces(
         go.Scatter(
             x=agg_df["step"],
-            y=agg_df["conf_top"],
+            y=agg_df["mean_conf_top"],
             fill=None,
             mode="lines",
             line=dict(color="powderblue"),
@@ -95,7 +132,7 @@ def main():
     fig.add_traces(
         go.Scatter(
             x=agg_df["step"],
-            y=agg_df["conf_bottom"],
+            y=agg_df["mean_conf_bottom"],
             fill="tonexty",
             mode="lines",
             line=dict(color="powderblue"),

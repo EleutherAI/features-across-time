@@ -26,55 +26,25 @@ def summary_stats(
     return means, conf_intervals
 
 
-def main():
-    bigram_dfs = []
-    for root, dirs, files in os.walk("output"):
-        for file in files:
-            if "bigram" in file:
-                with open(os.path.join(root, file), "rb") as f:
-                    bigram_dfs.append(pickle.load(f))
-
-    bigram_df = pd.concat(bigram_dfs)
-    print(bigram_df.head())
-    heatmap = go.Heatmap(
-        {
-            "x": bigram_df["step"],
-            "y": bigram_df["index"],
-            "z": bigram_df["mean_kl_divergence"],
-        }
-    )
-    fig = go.Figure(
-        data=[heatmap],
-    )
-    fig.update_layout(
-        {
-            "title": "Mean KL divergence over training steps",
-            "yaxis_title": "Token index",
-            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
-        }
-    )
-    fig.write_image(Path.cwd() / "images" / "bigram_kld.png")
-
+def plot_shuffled_loss():
     dfs = []
-    for root, dirs, files in os.walk("output"):
-        for file in files:
-            if "token" in file:
-                with open(os.path.join(root, file), "rb") as f:
-                    dfs.append(pickle.load(f))
-
+    for r, _, fs in os.walk("output"):
+        dfs.extend(
+            [pickle.load(open(os.path.join(r, f), "rb")) for f in fs if "token" in f]
+        )
     df = pd.concat(dfs)
-
     print(df.head())
-    heatmap = go.Heatmap(
-        {
-            "x": df["step"],
-            "y": df["index"],
-            "z": df["token_bow_mean_losses"] * 0.3366084909549386 / math.log(2),
-        }
-    )
 
     fig = go.Figure(
-        data=[heatmap],
+        [
+            go.Heatmap(
+                {
+                    "x": df["step"],
+                    "y": df["index"],
+                    "z": df["token_bow_mean_losses"] * 0.3366084909549386 / math.log(2),
+                }
+            )
+        ]
     )
     fig.update_layout(
         {
@@ -140,6 +110,50 @@ def main():
         )
     )
     fig.write_image(Path.cwd() / "images" / "agg_losses.png")
+
+
+def plot_bigram_divs():
+    bigram_dfs = []
+    for r, _, fs in os.walk("output"):
+        bigram_dfs.extend(
+            [pickle.load(open(os.path.join(r, f), "rb")) for f in fs if "bigram" in f]
+        )
+    bigram_df = pd.concat(bigram_dfs)
+    print(bigram_df.head())
+
+    div_labels = [
+        "bigram_logit_kl_div",
+        "logit_bigram_kl_div",
+        "bigram_logit_js_div",
+        "bigram_token_js_div",
+        "logit_token_js_div",
+    ]
+    for div_label in div_labels:
+        fig = go.Figure(
+            [
+                go.Heatmap(
+                    {
+                        "x": bigram_df["step"],
+                        "y": bigram_df["index"],
+                        "z": bigram_df[f"mean_{div_label}"],
+                    }
+                )
+            ]
+        )
+        fig.update_layout(
+            {
+                "title": f"Mean divergence over training steps ({div_label})",
+                "yaxis_title": "Token index",
+                "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+            }
+        )
+        fig.update_xaxes(type="log")
+        fig.write_image(Path.cwd() / "images" / f"{div_label}.png")
+
+
+def main():
+    plot_bigram_divs()
+    plot_shuffled_loss()
 
 
 if __name__ == "__main__":

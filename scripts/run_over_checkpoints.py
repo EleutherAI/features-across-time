@@ -52,7 +52,7 @@ def split_by_eod(loss: torch.Tensor, eod_indices: [torch.Tensor]) -> list[list]:
     result = []
     start_idx = 0
     for i in range(loss.shape[0]):
-        for zero_idx in eod_indices[i]:  # no loss for final token
+        for zero_idx in eod_indices[i]:
             if zero_idx > start_idx:
                 result.append(loss[i, start_idx : zero_idx + 1].cpu().numpy())
             start_idx = zero_idx + 1
@@ -80,7 +80,7 @@ def worker(
     gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
 ):
     output_path = Path.cwd() / "output" / f"checkpoint_token_data_{gpu_id}.pkl"
-    batch = 4
+    batch = 2
 
     torch.cuda.set_device(gpu_id)
     step_data = []
@@ -154,12 +154,11 @@ def worker(
 def main():
     model_name = "EleutherAI/pythia-160m"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
-    num_samples = 4000
+    num_samples = 100
 
-    # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
+    log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = [i for i in range(1000, 144000, 1000)]
-    # steps = log_steps + linear_steps
-    steps = linear_steps
+    steps = log_steps + linear_steps
 
     num_gpus = torch.cuda.device_count()
     max_steps_per_chunk = math.ceil(len(steps) / num_gpus)
@@ -170,16 +169,11 @@ def main():
 
     print(f"Parallelising over {num_gpus} GPUs...")
     mp.set_start_method("spawn")
-    processes = []
-    for i in range(num_gpus):
-        p = mp.Process(
-            target=worker, args=(i, step_indices[i], model_name, path, num_samples)
-        )
-        p.start()
-        processes.append(p)
-
-    for p in processes:
-        p.join()
+    with mp.Pool(num_gpus) as pool:
+        args = [
+            (i, step_indices[i], model_name, path, num_samples) for i in range(num_gpus)
+        ]
+        pool.starmap(worker, args)
 
 
 if __name__ == "__main__":

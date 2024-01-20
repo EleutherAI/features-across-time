@@ -28,17 +28,14 @@ class NgramModel:
         self.batch = batch
         self.seq_len = seq_len
 
-    def __iter__(self):
-        return self
-
-    def sample_bigrams(self) -> torch.Tensor:
+    def generate_bigrams(self) -> torch.Tensor:
         result = [torch.multinomial(self.unigrams, self.batch)]
         for _ in range(self.seq_len - 1):
             token_dists = self.bigrams[result[-1].cpu()].cuda()
             result.append(torch.multinomial(token_dists, 1).squeeze())
         return torch.stack(result, dim=-1)
 
-    def sample_unigrams(self) -> torch.Tensor:
+    def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(self.unigrams, self.batch * self.seq_len).reshape(
             self.batch, self.seq_len
         )
@@ -77,7 +74,7 @@ def summary_stats(
 def get_sequence_losses(
     model: GPTNeoXForCausalLM, sample: torch.Tensor, batch: int
 ) -> list[np.ndarray]:
-    """Calculate sequence losses. Start a new sequence at each EOD token."""
+    """Get sequence losses. Start a new sequence at each EOD token."""
     eod_indices = [torch.where(sample[i] == 0)[0] for i in range(len(sample))]
     outputs = model(sample)
     loss = F.cross_entropy(
@@ -114,10 +111,10 @@ def ngram_model_worker(
         step_unigram_losses = []
         step_bigram_losses = []
         for _ in range(num_samples // batch):
-            bigram_sample = ngram_model.sample_bigrams()
+            bigram_sample = ngram_model.generate_bigrams()
             step_bigram_losses.extend(get_sequence_losses(model, bigram_sample, batch))
 
-            unigram_sample = ngram_model.sample_unigrams()
+            unigram_sample = ngram_model.generate_unigrams()
             step_unigram_losses.extend(
                 get_sequence_losses(model, unigram_sample, batch)
             )
@@ -175,7 +172,7 @@ def main():
         ]
         dfs = pool.starmap(ngram_model_worker, args)
 
-    output_path = Path.cwd() / "output" / "checkpoint_ngrams_model.pkl"
+    output_path = Path.cwd() / "output" / "step_ngrams_model.pkl"
     with open(output_path, "wb") as f:
         pickle.dump(pd.concat(dfs), f)
 

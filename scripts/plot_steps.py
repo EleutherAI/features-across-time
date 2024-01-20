@@ -26,7 +26,7 @@ def adjust_confidence_intervals(
 
 
 def plot_shuffled_loss():
-    output_path = Path.cwd() / "output" / "checkpoint_shuffled.pkl"
+    output_path = Path.cwd() / "output" / "step_shuffled.pkl"
     with open(output_path, "rb") as f:
         shuffled_df = pickle.load(f)
 
@@ -82,11 +82,11 @@ def plot_shuffled_loss():
     )
     tick_values, tick_texts = base_2_log_ticks(df["step"])
     fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
-    fig.write_image(Path.cwd() / "images" / "mean_shuffled_bpb.png")
+    fig.write_image(Path.cwd() / "images" / "shuffled_bpb.png")
 
 
 def plot_ngram_model():
-    with open(Path.cwd() / "output" / "checkpoint_ngrams_model.pkl", "rb") as f:
+    with open(Path.cwd() / "output" / "step_ngrams_model.pkl", "rb") as f:
         ngram_df = pickle.load(f)
 
     df = ngram_df.groupby("step").mean().reset_index()
@@ -188,7 +188,7 @@ def plot_ngram_model():
 
 
 def plot_divs():
-    with open(Path.cwd() / "output" / "checkpoint_bigrams.pkl", "rb") as f:
+    with open(Path.cwd() / "output" / "step_divergences.pkl", "rb") as f:
         bigram_df = pickle.load(f)
 
     div_labels = [

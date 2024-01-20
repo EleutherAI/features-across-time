@@ -69,20 +69,6 @@ def matrix_summary_stats(
     return means, conf_intervals
 
 
-def summary_stats(
-    vectors: list[np.ndarray], target_length=2048
-) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    padded_vectors = [
-        np.pad(v, (0, target_length - len(v)), constant_values=np.nan) for v in vectors
-    ]
-    stacked_vectors = np.vstack(padded_vectors).astype(np.float64)
-    means = np.nanmean(stacked_vectors, axis=0)
-    standard_errors = stats.sem(stacked_vectors, axis=0, nan_policy="omit")
-    conf_intervals = stats.norm.interval(0.95, loc=means, scale=standard_errors)
-
-    return means, conf_intervals
-
-
 def kl_divergence(
     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
@@ -252,7 +238,7 @@ def main():
         ]
         dfs = pool.starmap(worker, args)
 
-    output_path = Path.cwd() / "output" / "checkpoint_bigrams_model.pkl"
+    output_path = Path.cwd() / "output" / "step_divergences.pkl"
     with open(output_path, "wb") as f:
         pickle.dump(pd.concat(dfs), f)
 

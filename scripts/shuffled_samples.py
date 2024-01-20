@@ -172,7 +172,7 @@ def main():
         ]
         dfs = pool.starmap(worker, args)
 
-    output_path = Path.cwd() / "output" / "checkpoint_shuffled.pkl"
+    output_path = Path.cwd() / "output" / "step_shuffled.pkl"
     with open(output_path, "wb") as f:
         pickle.dump(pd.concat(dfs), f)
 

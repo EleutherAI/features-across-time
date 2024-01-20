@@ -15,10 +15,16 @@ from transformers import AutoTokenizer, GPTNeoXForCausalLM
 class BigramModel:
     def __init__(self, path: str, batch=1, seq_len=2049):
         with open(path, "rb") as f:
-            bigrams = pickle.load(f)
+            bigram_counts = pickle.load(f)
 
-        self.bigrams = torch.tensor(bigrams.toarray(), dtype=torch.float32)
-        self.unigrams = self.bigrams.sum(dim=1).cuda()
+        bigram_counts = torch.tensor(bigram_counts.toarray(), dtype=torch.float32)
+        unigrams = bigram_counts.sum(dim=1)
+        row_sums = unigrams.unsqueeze(-1)
+
+        self.bigrams = torch.where(
+            (row_sums == 0), 1 / bigram_counts.shape[0], bigram_counts / row_sums
+        )
+        self.unigrams = unigrams.cuda()
         self.batch = batch
         self.seq_len = seq_len
 
@@ -31,8 +37,6 @@ class BigramModel:
             token_dists = self.bigrams[result[-1].cpu()].cuda()
             result.append(torch.multinomial(token_dists, 1).squeeze())
 
-        assert result[-1].shape == result[0].shape
-        print(torch.stack(result, dim=-1))
         return torch.stack(result, dim=-1)
 
 
@@ -56,27 +60,6 @@ class UnigramModel:
 
         assert result[-1].shape == result[0].shape
         return torch.stack(result, dim=0)
-
-
-class Pile:
-    def __init__(self, path: str, batch=1):
-        self.data = np.memmap(path, dtype=np.uint16, mode="r")
-        self.index = len(self.data)
-        self.chunk_size = 2049
-        self.batch = batch
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self.index <= 0:
-            raise StopIteration
-
-        start_index = max(self.index - (self.chunk_size * self.batch), 0)
-        sample = self.data[start_index : self.index]
-        self.index = start_index
-
-        return torch.from_numpy(sample.astype(np.int64)).reshape(self.batch, -1).cuda()
 
 
 def split_by_eod(
@@ -301,105 +284,15 @@ def bigram_model_worker(
     return pd.DataFrame({**index_data, **bigram_data})
 
 
-@torch.inference_mode()
-def worker(
-    gpu_id: str,
-    steps: list[int],
-    model_name: str,
-    pile_path: str,
-    num_samples: int,
-    d_vocab: int,
-) -> pd.DataFrame:
-    batch = 1
-
-    with open("/mnt/ssd-1/lucia/tmp_pythia-deduped-bigrams.pkl", "rb") as f:
-        normalized_bigrams = pickle.load(f)
-    normalized_bigrams = torch.tensor(normalized_bigrams)
-    with open("/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl", "rb") as f:
-        bigrams = pickle.load(f)
-    unigrams = torch.tensor(bigrams.sum(axis=1)).float()
-
-    torch.cuda.set_device(gpu_id)
-    div_labels = [
-        "bigram_logit_kl_div",
-        "unigram_logit_kl_div",
-        "unigram_logit_js_div",
-        "bigram_logit_js_div",
-        "bigram_token_js_div",
-        "logit_token_js_div",
-    ]
-    means = {label: [] for label in div_labels}
-    bottom_conf_intervals = {label: [] for label in div_labels}
-    top_conf_intervals = {label: [] for label in div_labels}
-    step_data = []
-    token_indices = []
-    for step in tqdm.tqdm(steps, position=gpu_id):
-        pile = Pile(pile_path, batch)
-        model = GPTNeoXForCausalLM.from_pretrained(
-            model_name, revision=f"step{step}", torch_dtype="auto"
-        ).cuda()
-
-        step_metrics = []
-        for _ in range(num_samples // batch):
-            sample = next(pile)
-            eod_indices = [torch.where(sample[i] == 0)[0] for i in range(len(sample))]
-            outputs = model(sample)
-            metrics, labels = get_metrics(
-                sample, outputs.logits, normalized_bigrams, unigrams, batch, d_vocab
-            )
-            step_metrics.extend(split_by_eod(metrics, eod_indices))
-
-        mean_step_divs, conf_intervals = matrix_summary_stats(
-            step_metrics, target_length=2048
-        )
-        for i in range(len(div_labels)):
-            means[div_labels[i]].extend(mean_step_divs[:, i])
-            bottom_conf_intervals[div_labels[i]].extend(conf_intervals[0][:, i])
-            top_conf_intervals[div_labels[i]].extend(conf_intervals[1][:, i])
-
-        step_data.extend([step] * 2048)
-        token_indices.extend(list(range(2048)))
-
-    index_data = {"step": step_data, "index": token_indices}
-    mean_data = {f"mean_{label}": means[label] for label in div_labels}
-    bottom_conf_data = {
-        f"bottom_conf_{label}": bottom_conf_intervals[label] for label in div_labels
-    }
-    top_conf_data = {
-        f"top_conf_{label}": top_conf_intervals[label] for label in div_labels
-    }
-    return pd.DataFrame(
-        {**index_data, **mean_data, **bottom_conf_data, **top_conf_data}
-    )
-
-
-def write_normalized_bigram_frequencies(path: str):
-    with open(path, "r+b") as f:
-        bigrams = pickle.load(f)
-
-    bigrams = bigrams.toarray().astype(np.float64)
-    row_sums = bigrams.sum(axis=1)
-    zero_rows = row_sums == 0
-
-    uniform_value = 1 / bigrams.shape[0]
-    bigrams = np.where(
-        zero_rows[:, np.newaxis], uniform_value, bigrams / row_sums[:, np.newaxis]
-    )
-
-    with open("/mnt/ssd-1/lucia/tmp_pythia-deduped-bigrams.pkl", "wb") as f:
-        pickle.dump(bigrams, f)
-
-
 def main():
     model_name = "EleutherAI/pythia-410m"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
-    num_samples = 16
+    num_samples = 32
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     d_vocab = len(tokenizer.vocab)  # 50277
-    write_normalized_bigram_frequencies("/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl")
 
     log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
-    linear_steps = [i for i in range(1000, 144000, 1000)]
+    linear_steps = list(range(1000, 144000, 1000))
     steps = log_steps + linear_steps
 
     num_gpus = torch.cuda.device_count()

@@ -79,7 +79,6 @@ def summary_stats(
 def worker(
     gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
 ):
-    output_path = Path.cwd() / "output" / f"checkpoint_token_data_{gpu_id}.pkl"
     batch = 2
 
     torch.cuda.set_device(gpu_id)
@@ -134,7 +133,7 @@ def worker(
         step_data.extend([step] * len(mean_bow_sequence_loss))
         token_indices.extend(list(range(2048)))
 
-    df = pd.DataFrame(
+    return pd.DataFrame(
         {
             "step": step_data,
             "index": token_indices,
@@ -147,12 +146,9 @@ def worker(
         }
     )
 
-    with open(output_path, "wb") as f:
-        pickle.dump(df, f)
-
 
 def main():
-    model_name = "EleutherAI/pythia-160m"
+    model_name = "EleutherAI/pythia-410m"
     path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     num_samples = 100
 
@@ -173,7 +169,11 @@ def main():
         args = [
             (i, step_indices[i], model_name, path, num_samples) for i in range(num_gpus)
         ]
-        pool.starmap(worker, args)
+        dfs = pool.starmap(worker, args)
+
+    output_path = Path.cwd() / "output" / "checkpoint_shuffled.pkl"
+    with open(output_path, "wb") as f:
+        pickle.dump(pd.concat(dfs), f)
 
 
 if __name__ == "__main__":

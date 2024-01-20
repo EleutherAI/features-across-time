@@ -149,11 +149,11 @@ def worker(
 
 def main():
     model_name = "EleutherAI/pythia-410m"
-    path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
+    pile_path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     num_samples = 100
 
     log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
-    linear_steps = [i for i in range(1000, 144000, 1000)]
+    linear_steps = list(range(1000, 144000, 1000))
     steps = log_steps + linear_steps
 
     num_gpus = torch.cuda.device_count()
@@ -167,7 +167,8 @@ def main():
     mp.set_start_method("spawn")
     with mp.Pool(num_gpus) as pool:
         args = [
-            (i, step_indices[i], model_name, path, num_samples) for i in range(num_gpus)
+            (i, step_indices[i], model_name, pile_path, num_samples)
+            for i in range(num_gpus)
         ]
         dfs = pool.starmap(worker, args)
 

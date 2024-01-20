@@ -14,42 +14,31 @@ def base_2_log_ticks(values):
 
 
 def adjust_confidence_intervals(
-    df, mean_col, conf_bottom_col, conf_top_col, num_items=2048
+    df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=2048
 ):
-    df[conf_top_col] = df[mean_col] + (df[conf_top_col] - df[mean_col]) / np.sqrt(
-        num_items
+    """Adjust confidence intervals for data averaged over token positions"""
+    df[top_conf_col] = df[mean_col] + (df[top_conf_col] - df[mean_col]) / np.sqrt(
+        sample_size
     )
-    df[conf_bottom_col] = df[mean_col] - (df[mean_col] - df[conf_bottom_col]) / np.sqrt(
-        num_items
+    df[bottom_conf_col] = df[mean_col] - (df[mean_col] - df[bottom_conf_col]) / np.sqrt(
+        sample_size
     )
     return df
 
 
-def plot_shuffled_loss():
+def plot_shuffled_bpb():
+    bpb_coefficient = 0.3366084909549386 / math.log(2)
+
     output_path = Path.cwd() / "output" / "step_shuffled.pkl"
     with open(output_path, "rb") as f:
         shuffled_df = pickle.load(f)
 
     df = shuffled_df.groupby("step").mean().reset_index()
-    df.columns = [
-        "step",
-        "index",
-        "mean_loss",
-        "mean_conf_bottom",
-        "mean_conf_top",
-        "mean_bow_loss",
-        "mean_bow_conf_bottom",
-        "mean_bow_conf_top",
-    ]
-    df["mean_bow_bpb"] = df["mean_bow_loss"] * 0.3366084909549386 / math.log(2)
-    df["mean_bow_bpb_conf_bottom"] = (
-        df["mean_bow_conf_bottom"] * 0.3366084909549386 / math.log(2)
-    )
-    df["mean_bow_bpb_conf_top"] = (
-        df["mean_bow_conf_top"] * 0.3366084909549386 / math.log(2)
-    )
+    df["mean_bow_bpb"] = df["mean_bow_loss"] * bpb_coefficient
+    df["mean_bow_bpb_bottom_conf"] = df["mean_bow_bottom_conf"] * bpb_coefficient
+    df["mean_bow_bpb_top_conf"] = df["mean_bow_top_conf"] * bpb_coefficient
     df = adjust_confidence_intervals(
-        df, "mean_bow_bpb", "mean_bow_bpb_conf_bottom", "mean_bow_bpb_conf_top"
+        df, "mean_bow_bpb", "mean_bow_bpb_bottom_conf", "mean_bow_bpb_top_conf"
     )
 
     fig = px.line(df, x="step", y="mean_bow_bpb")
@@ -63,7 +52,7 @@ def plot_shuffled_loss():
     fig.add_traces(
         go.Scatter(
             x=df["step"],
-            y=df["mean_bow_bpb_conf_top"],
+            y=df["mean_bow_bpb_top_conf"],
             fill=None,
             mode="lines",
             line=dict(color="powderblue"),
@@ -73,7 +62,7 @@ def plot_shuffled_loss():
     fig.add_traces(
         go.Scatter(
             x=df["step"],
-            y=df["mean_bow_bpb_conf_bottom"],
+            y=df["mean_bow_bpb_bottom_conf"],
             fill="tonexty",
             mode="lines",
             line=dict(color="powderblue"),
@@ -85,21 +74,21 @@ def plot_shuffled_loss():
     fig.write_image(Path.cwd() / "images" / "shuffled_bpb.png")
 
 
-def plot_ngram_model():
+def plot_ngram_model_bpb():
+    bpb_coefficient = 0.3366084909549386 / math.log(2)
+
     with open(Path.cwd() / "output" / "step_ngrams_model.pkl", "rb") as f:
         ngram_df = pickle.load(f)
 
     df = ngram_df.groupby("step").mean().reset_index()
-    df["mean_bigram_bpb"] = df["mean_bigram_loss"] * 0.3366084909549386 / math.log(2)
-    df["mean_bigram_bpb_conf_bottom"] = (
-        df["bottom_conf_bigram_loss"] * 0.3366084909549386 / math.log(2)
-    )
-    df["mean_bigram_bpb_conf_top"] = (
-        df["top_conf_bigram_loss"] * 0.3366084909549386 / math.log(2)
-    )
+    df.to_csv(Path.cwd() / "output" / "means_ngrams_model.csv", index=False)
+
+    df["mean_bigram_bpb"] = df["mean_bigram_loss"] * bpb_coefficient
+    df["mean_bigram_bpb_bottom_conf"] = df["bottom_conf_bigram_loss"] * bpb_coefficient
+    df["mean_bigram_bpb_top_conf"] = df["top_conf_bigram_loss"] * bpb_coefficient
 
     df = adjust_confidence_intervals(
-        df, "mean_bigram_bpb", "mean_bigram_bpb_conf_bottom", "mean_bigram_bpb_conf_top"
+        df, "mean_bigram_bpb", "mean_bigram_bpb_bottom_conf", "mean_bigram_bpb_top_conf"
     )
 
     fig = px.line(df, x="step", y="mean_bigram_bpb")
@@ -114,7 +103,7 @@ def plot_ngram_model():
     fig.add_traces(
         go.Scatter(
             x=df["step"],
-            y=df["mean_bigram_bpb_conf_top"],
+            y=df["mean_bigram_bpb_top_conf"],
             fill=None,
             mode="lines",
             line=dict(color="powderblue"),
@@ -124,7 +113,7 @@ def plot_ngram_model():
     fig.add_traces(
         go.Scatter(
             x=df["step"],
-            y=df["mean_bigram_bpb_conf_bottom"],
+            y=df["mean_bigram_bpb_bottom_conf"],
             fill="tonexty",
             mode="lines",
             line=dict(color="powderblue"),
@@ -137,19 +126,17 @@ def plot_ngram_model():
     fig.write_image(Path.cwd() / "images" / "bigram_data_bpb.png")
 
     df = ngram_df.groupby("step").mean().reset_index()
-    df["mean_unigram_bpb"] = df["mean_unigram_loss"] * 0.3366084909549386 / math.log(2)
-    df["mean_unigram_bpb_conf_bottom"] = (
-        df["bottom_conf_unigram_loss"] * 0.3366084909549386 / math.log(2)
+    df["mean_unigram_bpb"] = df["mean_unigram_loss"] * bpb_coefficient
+    df["mean_unigram_bpb_bottom_conf"] = (
+        df["bottom_conf_unigram_loss"] * bpb_coefficient
     )
-    df["mean_unigram_bpb_conf_top"] = (
-        df["top_conf_unigram_loss"] * 0.3366084909549386 / math.log(2)
-    )
+    df["mean_unigram_bpb_top_conf"] = df["top_conf_unigram_loss"] * bpb_coefficient
 
     df = adjust_confidence_intervals(
         df,
         "mean_unigram_bpb",
-        "mean_unigram_bpb_conf_bottom",
-        "mean_unigram_bpb_conf_top",
+        "mean_unigram_bpb_bottom_conf",
+        "mean_unigram_bpb_top_conf",
     )
 
     fig = px.line(df, x="step", y="mean_unigram_bpb")
@@ -164,7 +151,7 @@ def plot_ngram_model():
     fig.add_traces(
         go.Scatter(
             x=df["step"],
-            y=df["mean_unigram_bpb_conf_top"],
+            y=df["mean_unigram_bpb_top_conf"],
             fill=None,
             mode="lines",
             line=dict(color="powderblue"),
@@ -174,7 +161,7 @@ def plot_ngram_model():
     fig.add_traces(
         go.Scatter(
             x=df["step"],
-            y=df["mean_unigram_bpb_conf_bottom"],
+            y=df["mean_unigram_bpb_bottom_conf"],
             fill="tonexty",
             mode="lines",
             line=dict(color="powderblue"),
@@ -189,7 +176,7 @@ def plot_ngram_model():
 
 def plot_divs():
     with open(Path.cwd() / "output" / "step_divergences.pkl", "rb") as f:
-        bigram_df = pickle.load(f)
+        divergences_df = pickle.load(f)
 
     div_labels = [
         "bigram_logit_kl_div",
@@ -200,7 +187,8 @@ def plot_divs():
         "logit_token_js_div",
     ]
 
-    df = bigram_df.groupby("step").mean().reset_index()
+    df = divergences_df.groupby("step").mean().reset_index()
+    df.to_csv(Path.cwd() / "output" / "mean_divergences.csv", index=False)
 
     tick_values, tick_texts = base_2_log_ticks(df["step"])
 
@@ -242,9 +230,9 @@ def plot_divs():
 
 
 def main():
-    plot_ngram_model()
+    plot_ngram_model_bpb()
     plot_divs()
-    plot_shuffled_loss()
+    plot_shuffled_bpb()
 
 
 if __name__ == "__main__":

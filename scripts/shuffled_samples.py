@@ -137,12 +137,12 @@ def worker(
         {
             "step": step_data,
             "index": token_indices,
-            "mean_losses": losses,
-            "bottom_conf_intervals": bottom_conf_intervals,
-            "top_conf_intervals": top_conf_intervals,
-            "token_bow_mean_losses": bow_losses,
-            "token_bottom_conf_intervals": bow_bottom_conf_intervals,
-            "token_top_conf_intervals": bow_top_conf_intervals,
+            "mean_loss": losses,
+            "mean_bottom_conf": bottom_conf_intervals,
+            "mean_top_conf": top_conf_intervals,
+            "mean_bow_loss": bow_losses,
+            "mean_bow_bottom_conf": bow_bottom_conf_intervals,
+            "mean_bow_top_conf": bow_top_conf_intervals,
         }
     )
 

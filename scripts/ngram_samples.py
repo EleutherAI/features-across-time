@@ -8,6 +8,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import tqdm.auto as tqdm
+from plot_steps import plot_ngram_model_bpb
 from scipy import stats
 from transformers import GPTNeoXForCausalLM
 
@@ -162,19 +163,20 @@ def main():
         steps[i : i + max_steps_per_chunk]
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
+    args = [
+        (i, step_indices[i], model_name, ngrams_path, num_samples)
+        for i in range(num_gpus)
+    ]
 
     print(f"Parallelising over {num_gpus} GPUs...")
     mp.set_start_method("spawn")
     with mp.Pool(num_gpus) as pool:
-        args = [
-            (i, step_indices[i], model_name, ngrams_path, num_samples)
-            for i in range(num_gpus)
-        ]
         dfs = pool.starmap(ngram_model_worker, args)
 
-    output_path = Path.cwd() / "output" / "step_ngrams_model.pkl"
-    with open(output_path, "wb") as f:
+    with open(Path.cwd() / "output" / "step_ngrams_model.pkl", "wb") as f:
         pickle.dump(pd.concat(dfs), f)
+
+    plot_ngram_model_bpb()
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import argparse
 import math
 import pickle
 from pathlib import Path
@@ -229,11 +230,22 @@ def plot_divs():
         fig.write_image(Path.cwd() / "images" / f"{label}.png")
 
 
-def main():
-    plot_ngram_model_bpb()
-    plot_divs()
-    plot_shuffled_bpb()
+def main(divergences: bool, ngram_samples: bool, shuffled_samples: bool):
+    if divergences:
+        plot_divs()
+    if ngram_samples:
+        plot_ngram_model_bpb()
+    if shuffled_samples:
+        plot_shuffled_bpb()
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("--divergences", action="store_true")
+    parser.add_argument("--ngram_samples", action="store_true")
+    parser.add_argument("--shuffled_samples", action="store_true")
+
+    args = parser.parse_args()
+    main(args.divergences, args.ngram_samples, args.shuffled_samples)

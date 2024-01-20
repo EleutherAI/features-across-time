@@ -8,6 +8,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import tqdm.auto as tqdm
+from plot_steps import plot_divs
 from scipy import stats
 from transformers import AutoTokenizer, GPTNeoXForCausalLM
 
@@ -101,9 +102,6 @@ def get_divergences(
     batch: int,
     d_vocab: int,
 ) -> np.ndarray:
-    """We can calculate divergence from bigram stats at every position
-    but we throw away the final position to maintain consistency with
-    divergence from tokens"""
     bigram_dists = (
         normalized_bigrams[tokens[:, :-1].flatten().cpu()].cuda().log()
         + torch.finfo(torch.float32).eps
@@ -141,12 +139,13 @@ def worker(
     steps: list[int],
     model_name: str,
     pile_path: str,
+    bigrams_path: str,
     num_samples: int,
     d_vocab: int,
 ) -> pd.DataFrame:
     batch = 1
 
-    with open("/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl", "rb") as f:
+    with open(bigrams_path, "rb") as f:
         bigrams = pickle.load(f)
 
     bigrams = torch.tensor(bigrams.toarray(), dtype=torch.float32)
@@ -213,7 +212,8 @@ def worker(
 
 def main():
     model_name = "EleutherAI/pythia-410m"
-    path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
+    pile_path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
+    bigrams_path = "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl"
     num_samples = 16
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     d_vocab = len(tokenizer.vocab)  # 50277
@@ -228,19 +228,20 @@ def main():
         steps[i : i + max_steps_per_chunk]
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
+    args = [
+        (i, step_indices[i], model_name, pile_path, bigrams_path, num_samples, d_vocab)
+        for i in range(num_gpus)
+    ]
 
     print(f"Parallelising over {num_gpus} GPUs...")
     mp.set_start_method("spawn")
     with mp.Pool(num_gpus) as pool:
-        args = [
-            (i, step_indices[i], model_name, path, num_samples, d_vocab)
-            for i in range(num_gpus)
-        ]
         dfs = pool.starmap(worker, args)
 
-    output_path = Path.cwd() / "output" / "step_divergences.pkl"
-    with open(output_path, "wb") as f:
+    with open(Path.cwd() / "output" / "step_divergences.pkl", "wb") as f:
         pickle.dump(pd.concat(dfs), f)
+
+    plot_divs()
 
 
 if __name__ == "__main__":

@@ -1,39 +1,15 @@
 import math
-import os
 import pickle
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from scipy import stats
-
-
-def summary_stats(
-    vectors: list[np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, tuple[np.ndarray, np.ndarray]]:
-    max_length = max(len(v) for v in vectors)
-    padded_vectors = [
-        np.pad(v, (0, max_length - len(v)), constant_values=np.nan) for v in vectors
-    ]
-    stacked_vectors = np.vstack(padded_vectors)
-
-    means = np.nanmean(stacked_vectors, axis=0)
-    standard_errors = stats.sem(stacked_vectors, axis=0, nan_policy="omit")
-    conf_intervals = stats.norm.interval(0.95, loc=means, scale=standard_errors)
-
-    return means, conf_intervals
 
 
 def plot_shuffled_loss():
-    dfs = []
-    for r, _, fs in os.walk("output"):
-        dfs.extend(
-            [pickle.load(open(os.path.join(r, f), "rb")) for f in fs if "token" in f]
-        )
-    df = pd.concat(dfs)
-    print(df.head())
+    output_path = Path.cwd() / "output" / "checkpoint_shuffled.pkl"
+    with open(output_path, "rb") as f:
+        df = pickle.load(f)
 
     fig = go.Figure(
         [
@@ -55,37 +31,22 @@ def plot_shuffled_loss():
     )
     fig.write_image(Path.cwd() / "images" / "token_losses.png")
 
-    # log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
-    linear_steps = [i for i in range(1000, 144000, 1000)]
-    steps = linear_steps  # log_steps +
-
-    agg_means = []
-    mean_conf_bottoms = []
-    mean_conf_tops = []
-    for step in steps:
-        mean_bow_loss = df[df["step"] == step]["token_bow_mean_losses"]
-        mean_conf_bottoms.append(
-            df[df["step"] == step]["token_bottom_conf_intervals"].mean()
-        )
-        mean_conf_tops.append(df[df["step"] == step]["token_top_conf_intervals"].mean())
-        agg_means.append(mean_bow_loss.mean())
-
-    agg_df = pd.DataFrame(
-        {
-            "step": steps,
-            "mean_agg_loss": agg_means,
-            "mean_conf_bottom": mean_conf_bottoms,
-            "mean_conf_top": mean_conf_tops,
-        }
-    )
-
-    num_sequences = len(df[df["step"] == 1000]["token_bow_mean_losses"].tolist())
+    grouped = df.groupby("step")
+    agg_df = grouped.mean()[
+        [
+            "token_bow_mean_losses",
+            "token_bottom_conf_intervals",
+            "token_top_conf_intervals",
+        ]
+    ]
+    agg_df.reset_index(inplace=True)
+    agg_df.columns = ["step", "mean_agg_loss", "mean_conf_bottom", "mean_conf_top"]
 
     fig = px.line(agg_df, x="step", y="mean_agg_loss")
     fig.update_layout(
         {
             "title": "Mean loss on shuffled sequences over training steps.",
-            "yaxis_title": f"Mean loss over {num_sequences} sequences",
+            "yaxis_title": "Mean loss",
             "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
         }
     )
@@ -112,18 +73,83 @@ def plot_shuffled_loss():
     fig.write_image(Path.cwd() / "images" / "agg_losses.png")
 
 
-def plot_bigram_divs():
-    bigram_dfs = []
-    for r, _, fs in os.walk("output"):
-        bigram_dfs.extend(
-            [pickle.load(open(os.path.join(r, f), "rb")) for f in fs if "bigram" in f]
+def plot_bigram_model():
+    with open(Path.cwd() / "output" / "checkpoint_bigrams_model.pkl", "rb") as f:
+        bigram_df = pickle.load(f)
+
+    grouped = bigram_df.groupby("step")
+    agg_df = grouped.mean()[
+        [
+            "mean_bigram_losses",
+            "bigram_bottom_conf_intervals",
+            "bigram_top_conf_intervals",
+        ]
+    ]
+    agg_df.reset_index(inplace=True)
+    agg_df.columns = ["step", "mean_agg_loss", "mean_conf_bottom", "mean_conf_top"]
+
+    fig = px.line(agg_df, x="step", y="mean_agg_loss")
+    fig.update_layout(
+        {
+            "title": "Mean loss on bigram sequences over training steps.",
+            "yaxis_title": "Mean loss",
+            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+        }
+    )
+    fig.add_traces(
+        go.Scatter(
+            x=agg_df["step"],
+            y=agg_df["mean_conf_top"],
+            fill=None,
+            mode="lines",
+            line=dict(color="powderblue"),
+            showlegend=False,
         )
-    bigram_df = pd.concat(bigram_dfs)
-    print(bigram_df.head())
+    )
+    fig.add_traces(
+        go.Scatter(
+            x=agg_df["step"],
+            y=agg_df["mean_conf_bottom"],
+            fill="tonexty",
+            mode="lines",
+            line=dict(color="powderblue"),
+            showlegend=False,
+        )
+    )
+    fig.update_xaxes(type="log")
+    fig.write_image(Path.cwd() / "images" / "line_bigram_losses.png")
+
+    fig = go.Figure(
+        [
+            go.Heatmap(
+                {
+                    "x": bigram_df["step"],
+                    "y": bigram_df["index"],
+                    "z": bigram_df["mean_bigram_losses"],
+                }
+            )
+        ]
+    )
+    fig.update_layout(
+        {
+            "title": "Mean losses on auto-regressively sampled bigrams \
+                over training steps",
+            "yaxis_title": "Token index",
+            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+        }
+    )
+    fig.update_xaxes(type="log")
+    fig.write_image(Path.cwd() / "images" / "mean_bigram_losses.png")
+
+
+def plot_bigram_divs():
+    with open(Path.cwd() / "output" / "checkpoint_bigrams.pkl", "rb") as f:
+        bigram_df = pickle.load(f)
 
     div_labels = [
         "bigram_logit_kl_div",
-        "logit_bigram_kl_div",
+        "unigram_logit_kl_div",
+        "unigram_logit_js_div",
         "bigram_logit_js_div",
         "bigram_token_js_div",
         "logit_token_js_div",
@@ -152,6 +178,7 @@ def plot_bigram_divs():
 
 
 def main():
+    plot_bigram_model()
     plot_bigram_divs()
     plot_shuffled_loss()
 

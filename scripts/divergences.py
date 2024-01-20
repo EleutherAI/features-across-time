@@ -107,7 +107,7 @@ def js_divergence(
     return 0.5 * (kl_p + kl_q)
 
 
-def get_metrics(
+def get_divergences(
     tokens: torch.Tensor,
     logits: torch.Tensor,
     normalized_bigrams: torch.Tensor,
@@ -137,7 +137,7 @@ def get_metrics(
         "logit_token_js_div",
     ]
 
-    metrics = [
+    divergences = [
         kl_divergence(bigram_dists, logits).view(batch, -1),
         kl_divergence(unigram_dist, logits).view(batch, -1),
         js_divergence(unigram_dist.repeat(2048, 1), logits).view(batch, -1),
@@ -145,8 +145,8 @@ def get_metrics(
         js_divergence(bigram_dists, token_dists).view(batch, -1),
         js_divergence(logits, token_dists).view(batch, -1),
     ]
-    metrics = torch.stack(metrics, dim=-1)
-    return metrics, labels
+    divergences = torch.stack(divergences, dim=-1)
+    return divergences, labels
 
 
 @torch.inference_mode()
@@ -191,18 +191,18 @@ def worker(
             model_name, revision=f"step{step}", torch_dtype="auto"
         ).cuda()
 
-        step_metrics = []
+        step_divergences = []
         for _ in range(num_samples // batch):
             sample = next(pile)
             eod_indices = [torch.where(sample[i] == 0)[0] for i in range(len(sample))]
             outputs = model(sample)
-            metrics, labels = get_metrics(
+            divergences, labels = get_divergences(
                 sample, outputs.logits, normalized_bigrams, unigrams, batch, d_vocab
             )
-            step_metrics.extend(split_by_eod(metrics, eod_indices))
+            step_divergences.extend(split_by_eod(divergences, eod_indices))
 
         mean_step_divs, conf_intervals = matrix_summary_stats(
-            step_metrics, target_length=2048
+            step_divergences, target_length=2048
         )
         for i in range(len(div_labels)):
             means[div_labels[i]].extend(mean_step_divs[:, i])

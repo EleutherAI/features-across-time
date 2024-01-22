@@ -39,7 +39,7 @@ class NgramModel:
         )
 
     def generate_bigrams(self) -> torch.Tensor:
-        result = [torch.multinomial(self.unigrams, self.batch)]
+        result = [torch.multinomial(self.unigrams, self.batch).unsqueeze(1)]
         for _ in range(self.seq_len - 1):
             prev = result[-1]
             starts = self.bigrams.crow_indices()[prev]
@@ -61,9 +61,9 @@ class NgramModel:
             sampled_value_indices = torch.multinomial(token_probs, 1)
             sampled_col_indices = torch.gather(
                 token_col_indices, 1, sampled_value_indices
-            ).squeeze(1)
+            )
             result.append(sampled_col_indices)
-        return torch.stack(result, dim=-1)
+        return torch.cat(result, dim=1)
 
 
 def split_by_eod(

@@ -135,16 +135,15 @@ def get_divergences(
 
 @torch.inference_mode()
 def worker(
-    gpu_id: str,
+    gpu_id: int,
     steps: list[int],
     model_name: str,
     pile_path: str,
     bigrams_path: str,
     num_samples: int,
+    batch: int,
     d_vocab: int,
 ) -> pd.DataFrame:
-    batch = 1
-
     with open(bigrams_path, "rb") as f:
         bigrams = pickle.load(f)
 
@@ -215,6 +214,7 @@ def main():
     pile_path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     bigrams_path = "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl"
     num_samples = 16
+    batch = 1
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     d_vocab = len(tokenizer.vocab)  # 50277
 
@@ -229,7 +229,16 @@ def main():
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
     args = [
-        (i, step_indices[i], model_name, pile_path, bigrams_path, num_samples, d_vocab)
+        (
+            i,
+            step_indices[i],
+            model_name,
+            pile_path,
+            bigrams_path,
+            num_samples,
+            batch,
+            d_vocab,
+        )
         for i in range(num_gpus)
     ]
 

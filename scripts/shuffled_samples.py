@@ -78,10 +78,13 @@ def summary_stats(
 
 @torch.inference_mode()
 def worker(
-    gpu_id: str, steps: list[int], model_name: str, pile_path: str, num_samples: int
+    gpu_id: int,
+    steps: list[int],
+    model_name: str,
+    pile_path: str,
+    num_samples: int,
+    batch: int,
 ):
-    batch = 2
-
     torch.cuda.set_device(gpu_id)
     step_data = []
     token_indices = []
@@ -152,6 +155,7 @@ def main():
     model_name = "EleutherAI/pythia-410m"
     pile_path = "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     num_samples = 100
+    batch = 2
 
     log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = list(range(1000, 144000, 1000))
@@ -164,7 +168,7 @@ def main():
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
     args = [
-        (i, step_indices[i], model_name, pile_path, num_samples)
+        (i, step_indices[i], model_name, pile_path, num_samples, batch)
         for i in range(num_gpus)
     ]
 

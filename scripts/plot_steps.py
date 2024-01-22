@@ -76,21 +76,15 @@ def plot_shuffled_bpb():
 
 
 def plot_ngram_model_bpb():
-    bpb_coefficient = 0.3366084909549386 / math.log(2)
+    with open(Path.cwd() / "output" / "step_ngrams_model_means.pkl", "rb") as f:
+        df = pickle.load(f)
 
-    with open(Path.cwd() / "output" / "step_ngrams_model.pkl", "rb") as f:
-        ngram_df = pickle.load(f)
-
-    df = ngram_df.groupby("step").mean().reset_index()
     df.to_csv(Path.cwd() / "output" / "means_ngrams_model.csv", index=False)
 
+    bpb_coefficient = 0.3366084909549386 / math.log(2)
     df["mean_bigram_bpb"] = df["mean_bigram_loss"] * bpb_coefficient
     df["mean_bigram_bpb_bottom_conf"] = df["bottom_conf_bigram_loss"] * bpb_coefficient
     df["mean_bigram_bpb_top_conf"] = df["top_conf_bigram_loss"] * bpb_coefficient
-
-    df = adjust_confidence_intervals(
-        df, "mean_bigram_bpb", "mean_bigram_bpb_bottom_conf", "mean_bigram_bpb_top_conf"
-    )
 
     fig = px.line(df, x="step", y="mean_bigram_bpb")
     fig.update_layout(
@@ -126,19 +120,11 @@ def plot_ngram_model_bpb():
     fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
     fig.write_image(Path.cwd() / "images" / "bigram_data_bpb.png")
 
-    df = ngram_df.groupby("step").mean().reset_index()
     df["mean_unigram_bpb"] = df["mean_unigram_loss"] * bpb_coefficient
     df["mean_unigram_bpb_bottom_conf"] = (
         df["bottom_conf_unigram_loss"] * bpb_coefficient
     )
     df["mean_unigram_bpb_top_conf"] = df["top_conf_unigram_loss"] * bpb_coefficient
-
-    df = adjust_confidence_intervals(
-        df,
-        "mean_unigram_bpb",
-        "mean_unigram_bpb_bottom_conf",
-        "mean_unigram_bpb_top_conf",
-    )
 
     fig = px.line(df, x="step", y="mean_unigram_bpb")
     fig.update_layout(

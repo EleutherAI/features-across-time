@@ -10,36 +10,60 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 from plot_steps import plot_ngram_model_bpb
 from scipy import stats
-from transformers import GPTNeoXForCausalLM
+from transformers import AutoTokenizer, GPTNeoXForCausalLM
 
 
 class NgramModel:
-    def __init__(self, path: str, batch=1, seq_len=2049):
-        with open(path, "rb") as f:
-            bigram_counts = pickle.load(f)
-
-        bigram_counts = torch.tensor(bigram_counts.toarray(), dtype=torch.float32)
-        unigrams = bigram_counts.sum(dim=1)
-        row_sums = unigrams.unsqueeze(-1)
-
-        self.bigrams = torch.where(
-            (row_sums == 0), 1 / bigram_counts.shape[0], bigram_counts / row_sums
-        )
-        self.unigrams = unigrams.cuda()
+    def __init__(self, path: str, d_vocab: int, batch=1, seq_len=2049):
+        self.d_vocab = d_vocab
         self.batch = batch
         self.seq_len = seq_len
 
-    def generate_bigrams(self) -> torch.Tensor:
-        result = [torch.multinomial(self.unigrams, self.batch)]
-        for _ in range(self.seq_len - 1):
-            token_dists = self.bigrams[result[-1].cpu()].cuda()
-            result.append(torch.multinomial(token_dists, 1).squeeze())
-        return torch.stack(result, dim=-1)
+        with open(path, "rb") as f:
+            bigram_counts = pickle.load(f)
+
+        self.unigrams = (
+            torch.tensor(bigram_counts.toarray(), dtype=torch.float32).sum(dim=1).cuda()
+        )
+        self.bigrams = torch.sparse_csr_tensor(
+            bigram_counts.indptr,
+            bigram_counts.indices,
+            bigram_counts.data,
+            dtype=torch.float32,
+            device="cuda",
+        )
 
     def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(self.unigrams, self.batch * self.seq_len).reshape(
             self.batch, self.seq_len
         )
+
+    def generate_bigrams(self) -> torch.Tensor:
+        result = [torch.multinomial(self.unigrams, self.batch)]
+        for _ in range(self.seq_len - 1):
+            prev = result[-1]
+            starts = self.bigrams.crow_indices()[prev]
+            ends = self.bigrams.crow_indices()[prev + 1]
+
+            # 0 valued padding elements will not be sampled
+            token_probs = torch.zeros((self.batch, self.d_vocab), device="cuda")
+            token_col_indices = torch.zeros(
+                (self.batch, self.d_vocab), dtype=torch.int32, device="cuda"
+            )
+            for i in range(self.batch):
+                token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
+                    starts[i] : ends[i]
+                ]
+                token_col_indices[
+                    i, : ends[i] - starts[i]
+                ] = self.bigrams.col_indices()[starts[i] : ends[i]]
+
+            sampled_value_indices = torch.multinomial(token_probs, 1)
+            sampled_col_indices = torch.gather(
+                token_col_indices, 1, sampled_value_indices
+            ).squeeze(1)
+            result.append(sampled_col_indices)
+        return torch.stack(result, dim=-1)
 
 
 def split_by_eod(
@@ -93,10 +117,11 @@ def ngram_model_worker(
     model_name: str,
     model_path: str,
     num_samples: int,
+    d_vocab: int,
 ) -> pd.DataFrame:
     batch = 4
     torch.cuda.set_device(gpu_id)
-    ngram_model = NgramModel(model_path, batch)
+    ngram_model = NgramModel(model_path, d_vocab, batch)
 
     labels = ["unigram_loss", "bigram_loss"]
     means = {label: [] for label in labels}
@@ -150,7 +175,9 @@ def ngram_model_worker(
 
 def main():
     model_name = "EleutherAI/pythia-410m"
-    ngrams_path = "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl"
+    ngram_path = "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl"
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    d_vocab = len(tokenizer.vocab)
     num_samples = 32
 
     log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
@@ -164,7 +191,7 @@ def main():
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
     args = [
-        (i, step_indices[i], model_name, ngrams_path, num_samples)
+        (i, step_indices[i], model_name, ngram_path, num_samples, d_vocab)
         for i in range(num_gpus)
     ]
 

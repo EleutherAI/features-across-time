@@ -2,6 +2,8 @@ import math
 import pickle
 from pathlib import Path
 import argparse
+import os
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -11,7 +13,7 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 from plot_steps import plot_ngram_model_bpb
 from scipy import stats
-from transformers import AutoTokenizer, GPTNeoXForCausalLM
+from transformers import AutoTokenizer, GPTNeoXForCausalLM, logging
 
 
 class NgramModel:
@@ -96,8 +98,10 @@ def ngram_model_worker(
     unigram_conf_intervals = []
     bigram_conf_intervals = []
     for step in tqdm.tqdm(steps, position=gpu_id):
+        os.makedirs(f'/root/.cache/{gpu_id}', exist_ok=True)
+
         model = GPTNeoXForCausalLM.from_pretrained(
-            model_name, revision=f"step{step}", torch_dtype="auto"
+            f'EleutherAI/{model_name}', revision=f"step{step}", torch_dtype="auto", cache_dir=f'/root/.cache/{gpu_id}'
         ).cuda()
 
         running_step_unigram_loss_mean = 0.0
@@ -135,6 +139,7 @@ def ngram_model_worker(
                 running_step_bigram_loss_mean, num_iters * batch * 2048
             )
         )
+        shutil.rmtree(f'/root/.cache/{gpu_id}', ignore_errors=True)
 
     return pd.DataFrame(
         {
@@ -156,23 +161,25 @@ def ngram_model_worker(
 
 
 def main(ngram_path: str):
+    logging.set_verbosity_error()
     model_batch_sizes = {
-        "pythia-14m": 16,
-        "pythia-70m": 16,
-        "pythia-160m": 16,
-        "pythia-410m": 8,
-        "pythia-1b": 2,
-        "pythia-1.4b": 2,
-        "pythia-2.8b": 2,
+        # "pythia-14m": 16,
+        # "pythia-70m": 16,
+        # "pythia-160m": 16,
+        # "pythia-410m": 16,
+        # "pythia-1b": 8,
+        # "pythia-1.4b": 8,
+        "pythia-2.8b": 4,
         "pythia-6.9b": 2,   
-        "pythia-12b": 2,   
+        "pythia-12b": 1,
     }
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    d_vocab = len(tokenizer.vocab)
+    # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    d_vocab = 50277 # len(tokenizer.vocab)
     num_samples = 32
 
     log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
     linear_steps = list(range(1000, 144000, 1000))
+    linear_steps.remove(116_000) # missing
     steps = log_steps + linear_steps
 
     num_gpus = torch.cuda.device_count()
@@ -186,7 +193,7 @@ def main(ngram_path: str):
 
     for model_name, batch in model_batch_sizes.items():
         args = [
-            (i, step_indices[i], f'EleutherAI/{model_name}', ngram_path, num_samples, batch, d_vocab)
+            (i, step_indices[i], model_name, ngram_path, num_samples, batch, d_vocab)
             for i in range(num_gpus)
         ]
         print(f"Parallelising over {num_gpus} GPUs...")

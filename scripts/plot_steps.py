@@ -2,6 +2,7 @@ import argparse
 import math
 import pickle
 from pathlib import Path
+import os
 
 import numpy as np
 import plotly.express as px
@@ -76,89 +77,104 @@ def plot_shuffled_bpb():
 
 
 def plot_ngram_model_bpb():
-    with open(Path.cwd() / "output" / "step_ngrams_model_means.pkl", "rb") as f:
-        df = pickle.load(f)
+    model_names = [
+        "pythia-14m",
+        "pythia-70m",
+        "pythia-160m",
+        "pythia-410m",
+        "pythia-1b",
+        "pythia-1.4b",
+        "pythia-2.8b",
+        "pythia-6.9b",   
+        "pythia-12b",   
+    ]
+    for model_name in model_names:
 
-    df.to_csv(Path.cwd() / "output" / "means_ngrams_model.csv", index=False)
+    # NN bias towards function of low frequency in the fourier domain
 
-    bpb_coefficient = 0.3366084909549386 / math.log(2)
-    df["mean_bigram_bpb"] = df["mean_bigram_loss"] * bpb_coefficient
-    df["mean_bigram_bpb_bottom_conf"] = df["bottom_conf_bigram_loss"] * bpb_coefficient
-    df["mean_bigram_bpb_top_conf"] = df["top_conf_bigram_loss"] * bpb_coefficient
+        with open(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}.pkl", "rb") as f:
+            df = pickle.load(f)
 
-    fig = px.line(df, x="step", y="mean_bigram_bpb")
-    fig.update_layout(
-        {
-            "title": "Mean BPB on bigram sequences over training steps.",
-            "yaxis_title": "Bits per byte",
-            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
-            "yaxis_range": [3, 6],
-        }
-    )
-    fig.add_traces(
-        go.Scatter(
-            x=df["step"],
-            y=df["mean_bigram_bpb_top_conf"],
-            fill=None,
-            mode="lines",
-            line=dict(color="powderblue"),
-            showlegend=False,
+        df.to_csv(Path.cwd() / "output" / f"means_ngrams_model_{model_name}.csv", index=False)
+
+        bpb_coefficient = 0.3366084909549386 / math.log(2)
+        df["mean_bigram_bpb"] = df["mean_bigram_loss"] * bpb_coefficient
+        df["mean_bigram_bpb_bottom_conf"] = df["bottom_conf_bigram_loss"] * bpb_coefficient
+        df["mean_bigram_bpb_top_conf"] = df["top_conf_bigram_loss"] * bpb_coefficient
+
+        fig = px.line(df, x="step", y="mean_bigram_bpb")
+        fig.update_layout(
+            {
+                "title": f"Mean BPB on bigram sequences over training steps ({model_name})",
+                "yaxis_title": "Bits per byte",
+                "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+                "yaxis_range": [3, 12],
+            }
         )
-    )
-    fig.add_traces(
-        go.Scatter(
-            x=df["step"],
-            y=df["mean_bigram_bpb_bottom_conf"],
-            fill="tonexty",
-            mode="lines",
-            line=dict(color="powderblue"),
-            showlegend=False,
+        fig.add_traces(
+            go.Scatter(
+                x=df["step"],
+                y=df["mean_bigram_bpb_top_conf"],
+                fill=None,
+                mode="lines",
+                line=dict(color="powderblue"),
+                showlegend=False,
+            )
         )
-    )
-
-    tick_values, tick_texts = base_2_log_ticks(df["step"])
-    fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
-    fig.write_image(Path.cwd() / "images" / "bigram_data_bpb.png")
-
-    df["mean_unigram_bpb"] = df["mean_unigram_loss"] * bpb_coefficient
-    df["mean_unigram_bpb_bottom_conf"] = (
-        df["bottom_conf_unigram_loss"] * bpb_coefficient
-    )
-    df["mean_unigram_bpb_top_conf"] = df["top_conf_unigram_loss"] * bpb_coefficient
-
-    fig = px.line(df, x="step", y="mean_unigram_bpb")
-    fig.update_layout(
-        {
-            "title": "BPB on unigram sequences over training steps.",
-            "yaxis_title": "Bits per byte",
-            "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
-            "yaxis_range": [3, 6],
-        }
-    )
-    fig.add_traces(
-        go.Scatter(
-            x=df["step"],
-            y=df["mean_unigram_bpb_top_conf"],
-            fill=None,
-            mode="lines",
-            line=dict(color="powderblue"),
-            showlegend=False,
+        fig.add_traces(
+            go.Scatter(
+                x=df["step"],
+                y=df["mean_bigram_bpb_bottom_conf"],
+                fill="tonexty",
+                mode="lines",
+                line=dict(color="powderblue"),
+                showlegend=False,
+            )
         )
-    )
-    fig.add_traces(
-        go.Scatter(
-            x=df["step"],
-            y=df["mean_unigram_bpb_bottom_conf"],
-            fill="tonexty",
-            mode="lines",
-            line=dict(color="powderblue"),
-            showlegend=False,
-        )
-    )
 
-    tick_values, tick_texts = base_2_log_ticks(df["step"])
-    fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
-    fig.write_image(Path.cwd() / "images" / "unigram_data_bpb.png")
+        tick_values, tick_texts = base_2_log_ticks(df["step"])
+        fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
+        fig.write_image(Path.cwd() / "images" / f"bigram_data_bpb_{model_name}.png")
+
+        df["mean_unigram_bpb"] = df["mean_unigram_loss"] * bpb_coefficient
+        df["mean_unigram_bpb_bottom_conf"] = (
+            df["bottom_conf_unigram_loss"] * bpb_coefficient
+        )
+        df["mean_unigram_bpb_top_conf"] = df["top_conf_unigram_loss"] * bpb_coefficient
+
+        fig = px.line(df, x="step", y="mean_unigram_bpb")
+        fig.update_layout(
+            {
+                "title": f"BPB on unigram sequences over training steps ({model_name})",
+                "yaxis_title": "Bits per byte",
+                "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
+                "yaxis_range": [3, 12],
+            }
+        )
+        fig.add_traces(
+            go.Scatter(
+                x=df["step"],
+                y=df["mean_unigram_bpb_top_conf"],
+                fill=None,
+                mode="lines",
+                line=dict(color="powderblue"),
+                showlegend=False,
+            )
+        )
+        fig.add_traces(
+            go.Scatter(
+                x=df["step"],
+                y=df["mean_unigram_bpb_bottom_conf"],
+                fill="tonexty",
+                mode="lines",
+                line=dict(color="powderblue"),
+                showlegend=False,
+            )
+        )
+
+        tick_values, tick_texts = base_2_log_ticks(df["step"])
+        fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
+        fig.write_image(Path.cwd() / "images" / f"unigram_data_bpb_{model_name}.png")
 
 
 def plot_divs():
@@ -217,6 +233,7 @@ def plot_divs():
 
 
 def main(divergences: bool, ngram_samples: bool, shuffled_samples: bool):
+    os.makedirs(Path.cwd() / 'images', exist_ok=True)
     if divergences:
         plot_divs()
     if ngram_samples:

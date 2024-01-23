@@ -122,7 +122,6 @@ def ngram_model_worker(
                 reduction="mean",
             ).item()
             running_step_bigram_loss_mean += (bigram_loss_mean / num_iters)
-            del bigram_sample, bigram_outputs
 
         unigram_means.append(running_step_unigram_loss_mean)
         unigram_conf_intervals.append(

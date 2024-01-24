@@ -14,27 +14,17 @@ import tqdm.auto as tqdm
 from plot_steps import plot_ngram_model_bpb
 from scipy import stats
 from transformers import AutoTokenizer, GPTNeoXForCausalLM, logging
+from datasets import load_from_disk, Dataset
+import time
+from optimum.bettertransformer import BetterTransformer
+from torch.profiler import profile, record_function, ProfilerActivity
+import gc
+from torch.utils.data import DataLoader
 
 
-class Pile:
-    def __init__(self, path: str, batch=1):
-        self.data = np.memmap(path, dtype=np.uint16, mode="r")
-        self.index = len(self.data)
-        self.chunk_size = 2049
-        self.batch = batch
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self.index <= 0:
-            raise StopIteration
-
-        start_index = max(self.index - (self.chunk_size * self.batch), 0)
-        sample = self.data[start_index : self.index]
-        self.index = start_index
-
-        return torch.from_numpy(sample.astype(np.int64)).reshape(self.batch, -1).cuda()
+def batch_generator(dataset, batch_size):
+    for i in range(0, len(dataset), batch_size):
+        yield dataset[i:i + batch_size]['input_ids']
 
 
 class NgramModel:
@@ -48,50 +38,73 @@ class NgramModel:
 
         self.unigrams = (
             torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
-        )
+        ) # small
         self.bigrams = torch.sparse_csr_tensor(
             bigram_counts.indptr.astype(np.int64),
             bigram_counts.indices.astype(np.int64),
             bigram_counts.data.astype(np.float32),
             dtype=torch.float32,
             device="cuda",
-        )
+        ) # 0.7 GB
 
     def generate_unigrams(self) -> torch.Tensor:
-        return torch.multinomial(self.unigrams, self.batch * self.seq_len).reshape(
+        return torch.multinomial(
+            self.unigrams, 
+            self.batch * self.seq_len, 
+            replacement=True
+        ).reshape(
             self.batch, self.seq_len
         )
 
+
+    def get_bigram_dists(self, prev: torch.Tensor) -> torch.Tensor:
+        starts = self.bigrams.crow_indices()[prev]
+        ends = self.bigrams.crow_indices()[prev + 1]
+
+        # 0 padding to batch rows with variable numbers of non-zero elements
+        # prev: 8 * 2048, 50000, 32 [batch seq d_vocab float32]
+        # bigram_dists: 8 * 2048, 50000, 32
+        bigram_dists = torch.zeros((len(prev), self.d_vocab), dtype=torch.float32, device='cuda') # 0.2 GB
+        for i in range(len(prev)):
+            filled_col_indices = self.bigrams.col_indices()[starts[i] : ends[i]]
+            filled_col_values = self.bigrams.values()[starts[i] : ends[i]]
+            bigram_dists[i][filled_col_indices] = filled_col_values
+        return bigram_dists
+        
+
+    # separate slice sparse array function with test
+    def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
+        """Given a batch of previous tokens, sample from a bigram model 
+        using conditional distributions stored in a sparse CSR tensor."""
+        starts = self.bigrams.crow_indices()[prev]
+        ends = self.bigrams.crow_indices()[prev + 1]
+
+        # 0 padding to batch rows with variable numbers of non-zero elements
+        token_probs = torch.zeros((self.batch, self.d_vocab), dtype=torch.float32, device='cuda')
+        token_col_indices = torch.zeros(
+            (self.batch, self.d_vocab), dtype=torch.int32, device='cuda'
+        )
+        for i in range(self.batch):
+            token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
+                starts[i] : ends[i]
+            ]
+            token_col_indices[
+                i, : ends[i] - starts[i]
+            ] = self.bigrams.col_indices()[starts[i] : ends[i]]
+
+        sampled_value_indices = torch.multinomial(token_probs, 1)
+        return torch.gather(
+            token_col_indices, 1, sampled_value_indices
+        )
+
     def generate_bigrams(self) -> torch.Tensor:
-        """Auto-regressively sample tokens using conditional distributions stored
-        in a sparse CSR tensor. Each sequence is initialized by sampling from a
-        unigram distribution."""
-        result = [torch.multinomial(self.unigrams, self.batch).unsqueeze(1)]
+        """Auto-regressively generate bigram model sequence. Initialize each 
+        sequence by sampling from a unigram model."""
+        result = [torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)]
         for _ in range(self.seq_len - 1):
             prev = result[-1]
-            starts = self.bigrams.crow_indices()[prev]
-            ends = self.bigrams.crow_indices()[prev + 1]
-
-            # 0 padding to batch rows with variable numbers of non-zero elements
-            token_probs = torch.zeros((self.batch, self.d_vocab), device="cuda")
-            token_col_indices = torch.zeros(
-                (self.batch, self.d_vocab), dtype=torch.int32, device="cuda"
-            )
-            for i in range(self.batch):
-                token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
-                    starts[i] : ends[i]
-                ]
-                token_col_indices[
-                    i, : ends[i] - starts[i]
-                ] = self.bigrams.col_indices()[starts[i] : ends[i]]
-
-            sampled_value_indices = torch.multinomial(token_probs, 1)
-            sampled_col_indices = torch.gather(
-                token_col_indices, 1, sampled_value_indices
-            )
-            result.append(sampled_col_indices)
+            result.append(self.sample_bigram(prev))
         return torch.cat(result, dim=1)
-
 
 
 def kl_divergence(
@@ -117,44 +130,73 @@ def js_divergence(
     kl_q = torch.nansum(log_q.exp() * (log_q - log_m), dim)
     return 0.5 * (kl_p + kl_q)
 
+@torch.compile
+def one_hot_js_divergence(
+    logit_q: torch.Tensor, p_index: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
+    log_q = logit_q.log_softmax(dim) 
+    p_denom = torch.tensor(math.e) + (log_q.size(dim) - 1)
+    log_p_target = torch.tensor(math.e).div(p_denom).log()
+    log_p_uniform = torch.tensor(1.0).div(p_denom).log()
 
-def get_divergences(
+    # accumulate log_m
+    log_m = log_q.sub(math.log(2)).exp()
+    log_m += log_p_uniform.sub(math.log(2)).exp()
+    # ((p_target - p_uniform) / 2) in log space
+    log_m[:, p_index] += (
+        log_p_target.sub(math.log(2)).exp() - 
+        log_p_uniform.sub(math.log(2)).exp())
+    log_m = log_m.log()
+    # accumulate kl_p
+    kl_p = -log_m
+    kl_p += log_p_uniform
+    kl_p[:, p_index] += (log_p_target - log_p_uniform)
+    kl_p *= log_p_uniform.exp()
+    kl_p[:, p_index] *= (log_p_target - log_p_uniform).exp()
+    kl_p = torch.nansum(kl_p, dim)
+    kl_q = torch.nansum(log_q.exp() * (log_q - log_m), dim)
+    # torch.cuda.synchronize()
+    # print(torch.cuda.memory_allocated(0)) # 7 GB
+    return 0.5 * (kl_p + kl_q)
+
+
+# @torch.compile
+def get_mean_divergences(
     tokens: torch.Tensor,
     logits: torch.Tensor,
-    bigrams: torch.Tensor,
-    unigrams: torch.Tensor,
+    ngram_model: NgramModel,
     batch: int,
     d_vocab: int,
 ) -> np.ndarray:
+    divergences = []
+    logits = logits[:, :-1, :d_vocab].flatten(0, 1) # NANs # 0.2 GB * batch (2048 * 50277 * 16)
+    sample = tokens[:, 1:].flatten()
     bigram_dists = (
-        bigrams[tokens[:, :-1].flatten()].log()
+        ngram_model.get_bigram_dists(tokens[:, :-1].flatten()).log()
         + torch.finfo(torch.float32).eps
-    )
-    unigram_dist = unigrams.log() + torch.finfo(torch.float32).eps
-    sample = tokens[:, 1:].view(batch * 2048)
-    token_dists = F.one_hot(sample, num_classes=d_vocab).float().log()
+    ) # 0.2 GB (2048 * 50277 * 32)
+    divergences.append(one_hot_js_divergence(logits, sample).mean())
+    divergences.append(one_hot_js_divergence(bigram_dists, sample).mean()) # / probabilities by 2 and add 5
+    del sample
 
-    logits = logits[:, :-1, :d_vocab].view(batch * 2048, -1)
+    divergences.append(kl_divergence(bigram_dists, logits).mean())
+    divergences.append(js_divergence(bigram_dists, logits).mean()) 
+    del bigram_dists
+
+    unigram_dist = ngram_model.unigrams.log() + torch.finfo(torch.float32).eps
+    divergences.append(kl_divergence(unigram_dist, logits).mean())
+    divergences.append(js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean())
+    del unigram_dist
 
     labels = [
-        "bigram_logit_kl_div",
-        "unigram_logit_kl_div",
-        "unigram_logit_js_div",
-        "bigram_logit_js_div",
-        "bigram_token_js_div",
         "logit_token_js_div",
+        "bigram_token_js_div",
+        "bigram_logit_kl_div",
+        "bigram_logit_js_div",
+        "unigram_logit_kl_div",
+        "unigram_logit_js_div", 
     ]
-
-    divergences = [
-        kl_divergence(bigram_dists, logits).view(batch, -1),
-        kl_divergence(unigram_dist, logits).view(batch, -1),
-        js_divergence(unigram_dist.repeat(2048, 1), logits).view(batch, -1),
-        js_divergence(bigram_dists, logits).view(batch, -1),
-        js_divergence(bigram_dists, token_dists).view(batch, -1),
-        js_divergence(logits, token_dists).view(batch, -1),
-    ]
-    divergences = torch.stack(divergences, dim=-1)
-    return divergences, labels
+    return torch.stack(divergences), labels
 
 
 def get_confidence_intervals(
@@ -176,6 +218,8 @@ def ngram_model_worker(
     batch: int,
     d_vocab: int,
 ) -> pd.DataFrame:
+    tmp_cache_dir = Path('/mnt/ssd-1/lucia/.cache') / str(gpu_id)
+    os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, d_vocab, batch)
 
@@ -185,29 +229,32 @@ def ngram_model_worker(
     bigram_conf_intervals = []
     
     div_labels = [
-        "bigram_logit_kl_div",
-        "unigram_logit_kl_div",
-        "unigram_logit_js_div",
-        "bigram_logit_js_div",
-        "bigram_token_js_div",
         "logit_token_js_div",
+        "bigram_token_js_div",
+        "bigram_logit_kl_div",
+        "bigram_logit_js_div",
+        "unigram_logit_kl_div",
+        "unigram_logit_js_div", 
     ]
     div_means = {label: [] for label in div_labels}
     div_conf_intervals = {label: [] for label in div_labels}
 
-    for step in tqdm.tqdm(steps, position=gpu_id):
-        pile = Pile(pile_path, batch)
+    num_iters = math.ceil(num_samples / batch)
+    pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
+    for step in steps:
+        # with profile(activities=[ProfilerActivity.CUDA], profile_memory=True, record_shapes=True, with_stack=True) as prof:
+        pile = iter(DataLoader(load_from_disk(pile_path), batch_size=batch))
 
-        os.makedirs(f'/root/.cache/{gpu_id}', exist_ok=True)
         model = GPTNeoXForCausalLM.from_pretrained(
-            f'EleutherAI/{model_name}', revision=f"step{step}", torch_dtype="auto", cache_dir=f'/root/.cache/{gpu_id}'
+            f'EleutherAI/{model_name}', revision=f"step{step}", torch_dtype="auto", cache_dir=tmp_cache_dir
         ).cuda()
+        model = BetterTransformer.transform(model)
 
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
-        num_iters = math.ceil(num_samples / batch)
         for _ in range(num_iters):
+        
             unigram_sample = ngram_model.generate_unigrams()
             unigram_outputs = model(unigram_sample)
             unigram_loss_mean = F.cross_entropy(
@@ -217,22 +264,30 @@ def ngram_model_worker(
             ).item()
             running_step_unigram_loss_mean += (unigram_loss_mean / num_iters)
             del unigram_sample, unigram_outputs
-
             bigram_sample = ngram_model.generate_bigrams()
             bigram_outputs = model(bigram_sample)
+
             bigram_loss_mean = F.cross_entropy(
                 bigram_outputs.logits[:, :-1].flatten(0, 1),
                 bigram_sample[:, 1:].flatten(),
                 reduction="mean",
             ).item()
             running_step_bigram_loss_mean += (bigram_loss_mean / num_iters)
-
-            sample = next(pile)
+            del bigram_sample, bigram_outputs
+            sample = next(pile)['input_ids'].cuda().to(torch.int32)
             outputs = model(sample)
-            divergences, _ = get_divergences(
-                sample, outputs.logits, ngram_model.unigrams, ngram_model.bigrams, batch, d_vocab
+            # print(torch.cuda.memory_allocated(gpu_id)) # 7 GB
+            divergences, _ = get_mean_divergences(
+                sample, outputs.logits, ngram_model, batch, d_vocab
             )
-            running_step_div_means += (divergences.mean(dim=0) / num_iters).cpu()
+            running_step_div_means += (divergences / num_iters).cpu()
+            pbar.update(1)
+        # print("prof")
+        # print(
+        #     prof.key_averages(group_by_stack_n=5).table(row_limit=15, sort_by="cuda_memory_usage")) # group by top n stack trace entries
+        # prof.export_chrome_trace("trace.json")
+
+        # return
 
         unigram_means.append(running_step_unigram_loss_mean)
         unigram_conf_intervals.append(
@@ -247,25 +302,23 @@ def ngram_model_worker(
             )
         )
         for i, label in enumerate(div_labels):
-            div_means[label].append(running_step_div_means[i])
+            div_means[label].append(running_step_div_means[i].item())
             div_conf_intervals[label].append(
                 get_confidence_intervals(
-                    running_step_bigram_loss_mean[i], num_iters * batch
+                    div_means[label][-1], num_iters * batch
                 )
             )
 
-        shutil.rmtree(f'/root/.cache/{gpu_id}', ignore_errors=True)
+        shutil.rmtree(tmp_cache_dir / f'models--EleutherAI--{model_name}', ignore_errors=True)
 
     div_mean_data = {f"mean_{label}": div_means[label] for label in div_labels}
     div_bottom_conf_data = {
-        f"bottom_conf_{label}": bigram_conf_intervals[label][0] for label in div_labels
+        f"bottom_conf_{label}": [interval[0] for interval in div_conf_intervals[label]] for label in div_labels
     }
     div_top_conf_data = {
-        f"top_conf_{label}": bigram_conf_intervals[label][1] for label in div_labels
+        f"top_conf_{label}": [interval[1] for interval in div_conf_intervals[label]] for label in div_labels
     }
-
-    return pd.DataFrame(
-        {
+    data = {
             "step": steps,
             "mean_unigram_loss": unigram_means,
             "mean_bigram_loss": bigram_means,
@@ -283,30 +336,36 @@ def ngram_model_worker(
             **div_bottom_conf_data,
             **div_top_conf_data
         }
+
+    for label, blah in data.items():
+        print(label, len(blah))
+
+    return pd.DataFrame(
+        data    
     )
 
 
 def main(ngram_path: str, pile_path: str):
-    logging.set_verbosity_error()
     model_batch_sizes = {
-        # "pythia-14m": 32,
+        "pythia-14m": 8,
         # "pythia-70m": 32,
-        # "pythia-160m": 16,
+        # "pythia-160m": 8,
         # "pythia-410m": 16,
         # "pythia-1b": 8,
         # "pythia-1.4b": 8,
         # "pythia-2.8b": 4,
-        "pythia-6.9b": 1,   
-        "pythia-12b": 1,
+        # "pythia-6.9b": 1,   
+        # "pythia-12b": 1,
     }
     # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     d_vocab = 50277 # len(tokenizer.vocab)
     num_samples = 1024
 
-    log_steps = [0] + [2**i for i in range(int(math.log2(512)) + 1)]
-    linear_steps = list(range(1000, 144000, 1000))
-    linear_steps.remove(116_000) # missing
-    steps = log_steps + linear_steps
+    log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
+    linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
+    # linear_steps = list(range(1000, 144000, 1000))
+    # linear_steps.remove(116_000) # missing in 1B
+    steps = log_steps + linear_step_samples + [144_000]
 
     num_gpus = torch.cuda.device_count()
     mp.set_start_method("spawn")
@@ -322,14 +381,16 @@ def main(ngram_path: str, pile_path: str):
             (i, step_indices[i], model_name, ngram_path, pile_path, num_samples, batch, d_vocab)
             for i in range(num_gpus)
         ]
+        num_gpus = 1
+        args = args[:1]
         print(f"Parallelising over {num_gpus} GPUs...")
         with mp.Pool(num_gpus) as pool:
             dfs = pool.starmap(ngram_model_worker, args)
 
-        with open(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}.pkl", "wb") as f:
+        with open(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}_{num_samples}.pkl", "wb") as f:
             pickle.dump(pd.concat(dfs), f)
 
-    plot_ngram_model_bpb()
+    plot_ngram_model_bpb(num_samples)
 
 
 if __name__ == "__main__":
@@ -343,7 +404,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--pile_path",
-        default="/mnt/ssd-1/lucia",
+        default='val_tokenized.hf', # '/mnt/ssd-1/lucia/val_tokenized.hf',
         help="Path to Pile validation data",
     )
     args = parser.parse_args()

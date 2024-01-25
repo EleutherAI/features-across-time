@@ -8,50 +8,45 @@ import os
 import pickle
 import torch
 import torchvision.transforms as T
+import torchvision.transforms.functional as TF
 from concept_erasure import QuadraticEditor, QuadraticFitter
+from concept_erasure.quantile import QuantileNormalizer
+from concept_erasure.utils import assert_type
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
 from einops import rearrange
-from torch import nn, Tensor
-from torch.distributions import Categorical, MultivariateNormal
-from tqdm.auto import tqdm
+from torch import nn, optim, Tensor
+from torch.distributions import MultivariateNormal
 from transformers import (
+    get_cosine_schedule_with_warmup,
     Trainer,
     TrainerCallback,
     TrainerControl,
     TrainerState,
     TrainingArguments,
 )
+from transformers.modeling_outputs import ModelOutput
 
 
-class FakeImages:
-    def __init__(
-        self,
-        root: str,
-        names: list[str],
-        shape: tuple[int, int, int] = (3, 32, 32),
-        trf: Callable = lambda x: x,
-    ):
-        class_list = sorted((name, torch.load(f"{root}/{name}.pt")) for name in names)
-        self.data = torch.cat([x for _, x in class_list])
-        self.labels = torch.cat(
-            [
-                torch.full([len(x)], i, device=x.device)
-                for i, (_, x) in enumerate(class_list)
-            ]
-        )
-        self.shape = shape
-        self.trf = trf
+@dataclass
+class IndependentCoordinateSampler:
+    class_probs: Tensor
+    editor: QuantileNormalizer
+    size: int
 
-    def __getitem__(self, idx: int) -> dict[str, Tensor]:
-        c, h, w = self.shape
-        x = rearrange(self.data[idx], "(h w c) -> c h w", c=c, h=h, w=w)
+    def __getitem__(self, _: int) -> dict[str, Tensor]:
+        y = torch.multinomial(self.class_probs, 1).squeeze()
+        lut = self.editor.lut[y]
+
+        indices = torch.randint(0, lut.shape[-1], lut[..., 0].shape, device=lut.device)
+        x = lut.gather(-1, indices[..., None]).squeeze(-1)
+
         return {
-            "pixel_values": self.trf(x),
-            "label": self.labels[idx],
+            "pixel_values": x,
+            "label": y,
         }
 
     def __len__(self) -> int:
-        return len(self.data)
+        return self.size
 
 
 class GaussianMixture:
@@ -59,7 +54,7 @@ class GaussianMixture:
         self,
         means: Tensor,
         covs: Tensor,
-        class_probs: Categorical,
+        class_probs: Tensor,
         size: int,
         shape: tuple[int, int, int] = (3, 32, 32),
         trf: Callable = lambda x: x,
@@ -74,10 +69,8 @@ class GaussianMixture:
         if idx >= self.size:
             raise IndexError(f"Index {idx} out of bounds for size {self.size}")
 
-        y = self.class_probs.sample()
-
-        c, h, w = self.shape
-        x = rearrange(self.dists[y].sample(), "(h w c) -> c h w", c=c, h=h, w=w)
+        y = torch.multinomial(self.class_probs, 1).squeeze()
+        x = self.dists[y].sample().reshape(self.shape)
         return {
             "pixel_values": self.trf(x),
             "label": y,
@@ -89,21 +82,49 @@ class GaussianMixture:
 
 @dataclass
 class ConceptEditedDataset:
-    class_probs: Categorical
-    dataset: Dataset
+    class_probs: Tensor
     editor: QuadraticEditor
+    X: Tensor
+    Y: Tensor
 
     def __getitem__(self, idx: int) -> dict[str, Tensor]:
-        idx //= len(self.editor.class_means)
+        x, y = self.X[idx], int(self.Y[idx])
 
-        record = self.dataset[idx]
-        x, y = record["pixel_values"], record["label"]
-        
-        c, h, w = torch.atleast_3d(x).shape
-        target_y = self.class_probs.sample()
+        # Make sure we don't sample the correct class
+        loo_probs = self.class_probs.clone()
+        loo_probs[y] = 0
+        target_y = torch.multinomial(loo_probs, 1).squeeze()
 
-        x = self.editor.transport(x.view(1, -1), y, int(target_y)).flatten()
-        x = rearrange(x, "(h w c) -> c h w", c=c, h=h, w=w)
+        x = self.editor.transport(x[None], y, int(target_y)).squeeze(0)
+        return {
+            "pixel_values": x,
+            "label": target_y,
+        }
+
+    def __len__(self) -> int:
+        return len(self.Y)
+
+
+@dataclass
+class QuantileNormalizedDataset:
+    class_probs: Tensor
+    editor: QuantileNormalizer
+    X: Tensor
+    Y: Tensor
+
+    def __getitem__(self, idx: int) -> dict[str, Tensor]:
+        x, y = self.X[idx], self.Y[idx]
+
+        # Make sure we don't sample the correct class
+        loo_probs = self.class_probs.clone()
+        loo_probs[y] = 0
+        target_y = torch.multinomial(loo_probs, 1).squeeze()
+
+        lut1 = self.editor.lut[y]
+        lut2 = self.editor.lut[target_y]
+
+        indices = torch.searchsorted(lut1, x[..., None])
+        x = lut2.gather(-1, indices).squeeze(-1)
 
         return {
             "pixel_values": x,
@@ -111,7 +132,22 @@ class ConceptEditedDataset:
         }
 
     def __len__(self) -> int:
-        return len(self.dataset)
+        return len(self.Y)
+
+
+class HfWrapper(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, pixel_values: Tensor, labels: Tensor | None = None):
+        logits = self.model(pixel_values)
+        loss = (
+            nn.functional.cross_entropy(logits, labels)
+            if labels is not None
+            else None
+        )
+        return ModelOutput(logits=logits, loss=loss)
 
 
 @dataclass
@@ -158,6 +194,9 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool):
     labels = ds["train"].features[label_col].names
     print(f"Classes in '{dataset_str}': {labels}")
 
+    # Convert to RGB so we don't have to think about it
+    ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
+
     # Infer the image size from the first image
     example = ds["train"][0][img_col]
     c, (h, w) = len(example.mode), example.size
@@ -167,41 +206,38 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool):
         [
             T.RandAugment() if not train_on_fake else T.Lambda(lambda x: x),
             T.RandomHorizontalFlip(),
-            T.RandomCrop(h, padding=4),
+            T.RandomCrop(h, padding=h // 8),
             T.ToTensor() if not train_on_fake else T.Lambda(lambda x: x),
         ]
     )
-    nontrain_trf = T.ToTensor()
 
-    # Build the Q-LEACE editor
-    fitter = QuadraticFitter(c * h * w, len(labels), device="cuda")
     train = ds["train"].with_format("torch")
+    X = assert_type(Tensor, train[img_col]).div(255)
+    X = rearrange(X, "n h w c -> n c h w")
+    Y = assert_type(Tensor, train[label_col])
 
-    for x, y in zip(tqdm(train[img_col]), train[label_col]):
-        fitter.update_single(x.view(1, -1).cuda().div(255), int(y))
+    print("Computing statistics...")
+    fitter = QuadraticFitter.fit(X.flatten(1), Y)
+    normalizer = QuantileNormalizer(X, Y)
+    print("Done.")
 
-    test = ds["test"].with_transform(
-        lambda batch: {
-            "pixel_values": [nontrain_trf(x) for x in batch[img_col]],
-            "label": batch[label_col],
-        },
-    )
+    def preprocess(batch):
+        return {
+            "pixel_values": [TF.to_tensor(x) for x in batch[img_col]],
+            "label": torch.tensor(batch[label_col]),
+        }
 
-    if val := ds.get("validation"):
-        val = val.with_transform(
-            lambda batch: {
-                "pixel_values": [nontrain_trf(x) for x in batch[img_col]],
-                "label": batch[label_col],
-            },
-        )
+    if val := ds.get("validation", ds.get("val")):
+        test = ds["test"].with_transform(preprocess) if "test" in ds else None
+        val = val.with_transform(preprocess)
     else:
-        nontrain = test.train_test_split(train_size=1024, seed=0)
-        val, test = nontrain["train"], nontrain["test"]
+        nontrain = ds["test"].train_test_split(train_size=1024, seed=0)
+        val = nontrain["train"].with_transform(preprocess)
+        test = nontrain["test"].with_transform(preprocess)
 
-    # gaussian = FakeImages("/root/cifar-fake", labels, train_trf)
-    class_probs = Categorical(torch.bincount(train[label_col]))
+    class_probs = torch.bincount(Y).float()
     gaussian = GaussianMixture(
-        fitter.mean_x, fitter.sigma_xx, class_probs, len(val), (c, h, w)
+        fitter.mean_x.cpu(), fitter.sigma_xx.cpu(), class_probs, len(val), (c, h, w)
     )
 
     train = (
@@ -229,35 +265,81 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool):
             pickle.dump(editor, f)
 
     val_sets = {
-        "real": val,
-        "edited": ConceptEditedDataset(class_probs, val, editor),
+        "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
+        "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "gaussian": gaussian,
+        "real": val,
+        "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
     for net in nets:
         run_model(
-            train, val_sets, test, net, h, len(labels), num_channels=c
+            train, val_sets, test, dataset_str,  net, h, len(labels), num_channels=c
         )
 
 
 def run_model(
     train,
     val: dict[str, Dataset],
-    test: Dataset,
+    test: Dataset | None,
+    ds_str: str,
     net_str: str,
     image_size: int,
     num_classes: int,
     num_channels: int,
 ):
-    match net_str:
-        case "convnext":
+    # Can be changed by the match statement below
+    args = TrainingArguments(
+        output_dir=f"runs/{ds_str}/{net_str}",
+        # Used in the ConvNeXt V2 paper
+        adam_beta2=0.95,
+        # Swin Transformer really doesn't like fp16 so we use bf16
+        bf16=True,
+        dataloader_num_workers=24,
+        learning_rate=0.001,
+        logging_nan_inf_filter=False,
+        lr_scheduler_type="cosine",
+        max_steps=2**16,
+        per_device_train_batch_size=128,
+        remove_unused_columns=False,
+        run_name=f"{ds_str}-{net_str}",
+        # We manually determine when to save
+        save_strategy="no",
+        # Use Tensor Cores for fp32 matmuls
+        tf32=True,
+        warmup_steps=2000,
+
+        # Used by ConvNeXt and Swin
+        weight_decay=0.05,
+    )
+
+    match net_str.partition("-"):
+        case ("convnext", _, arch):
             from transformers import ConvNextV2Config, ConvNextV2ForImageClassification
+
+            match arch:
+                case "atto" | "":  # default
+                    depths = [2, 2, 6, 2]
+                    hidden_sizes = [40, 80, 160, 320]
+                case "femto":
+                    depths = [2, 2, 6, 2]
+                    hidden_sizes = [48, 96, 192, 384]
+                case "pico":
+                    depths = [2, 2, 6, 2]
+                    hidden_sizes = [64, 128, 256, 512]
+                case "nano":
+                    depths = [2, 2, 8, 2]
+                    hidden_sizes = [80, 160, 320, 640]
+                case "tiny":
+                    depths = [3, 3, 9, 3]
+                    hidden_sizes = [96, 192, 384, 768]
+                case other:
+                    raise ValueError(f"Unknown ConvNeXt architecture {other}")
 
             cfg = ConvNextV2Config(
                 image_size=image_size,
-                # Atto architecture
-                depths=[2, 2, 6, 2],
+                depths=depths,
                 drop_path_rate=0.1,
-                hidden_sizes=[40, 80, 160, 320],
+                hidden_sizes=hidden_sizes,
                 num_channels=num_channels,
                 num_labels=num_classes,
                 # The default of 4 x 4 patches shrinks the image too aggressively for
@@ -265,77 +347,93 @@ def run_model(
                 patch_size=1,
             )
             model = ConvNextV2ForImageClassification(cfg)
-        case "regnet":
-            from transformers import RegNetConfig, RegNetForImageClassification
-
-            cfg = RegNetConfig(
-                hidden_sizes=[40, 80, 160, 320],
-                num_channels=num_channels,
-                num_labels=num_classes,
+        case ("regnet", _, arch):
+            from torchvision.models import (
+                regnet_y_400mf,
+                regnet_y_800mf,
+                regnet_y_1_6gf,
+                regnet_y_3_2gf,
             )
-            cfg.downsample_in_first_stage = False
-            model = RegNetForImageClassification(cfg)
-        case "resnet":
-            from transformers import ResNetConfig, ResNetForImageClassification
 
-            cfg = ResNetConfig(
-                hidden_sizes=[40, 80, 160, 320],
-                num_channels=num_channels,
-                num_labels=num_classes,
-            )
-            cfg.downsample_in_first_stage = False
-            model = ResNetForImageClassification(cfg)
-        case "vit":
-            from transformers import ViTConfig, ViTForImageClassification
+            match arch:
+                case "400mf":
+                    net = regnet_y_400mf(num_classes=num_classes)
+                case "800mf":
+                    net = regnet_y_800mf(num_classes=num_classes)
+                case "1.6gf":
+                    net = regnet_y_1_6gf(num_classes=num_classes)
+                case "3.2gf":
+                    net = regnet_y_3_2gf(num_classes=num_classes)
+                case other:
+                    raise ValueError(f"Unknown RegNet architecture {other}")
 
-            cfg = ViTConfig(
-                hidden_size=512,
-                image_size=image_size,
-                intermediate_size=512,
-                num_attention_heads=8,
-                num_channels=num_channels,
-                num_hidden_layers=6,
-                num_labels=num_classes,
-                patch_size=2,
+            net.stem[0].stride = (1, 1) # type: ignore
+            model = HfWrapper(net)
+        case ("swin", _, arch):
+            from torchvision.models.swin_transformer import (
+                PatchMergingV2, SwinTransformer, SwinTransformerBlockV2,
             )
-            model = ViTForImageClassification(cfg)
+
+            match arch:
+                case "atto":
+                    num_heads = [2, 4, 8, 16]
+                    embed_dim = 40
+                case "femto":
+                    num_heads = [2, 4, 8, 16]
+                    embed_dim = 48
+                case "pico":
+                    num_heads = [2, 4, 8, 16]
+                    embed_dim = 64
+                case "nano":
+                    num_heads = [2, 4, 8, 16]
+                    embed_dim = 80
+                case "tiny" | "":   # default
+                    num_heads = [3, 6, 12, 24]
+                    embed_dim = 96
+                case other:
+                    raise ValueError(f"Unknown Swin architecture {other}")
+
+            swin = SwinTransformer(
+                patch_size=[2, 2],
+                embed_dim=embed_dim,
+                depths=[2, 2, 6, 2],
+                num_heads=num_heads,
+                window_size=[7, 7],
+                num_classes=num_classes,
+                stochastic_depth_prob=0.2,
+                block=SwinTransformerBlockV2,
+                downsample_layer=PatchMergingV2,
+            )
+            model = HfWrapper(swin)
         case _:
             raise ValueError(f"Unknown net {net_str}")
 
-    # HuggingFace initialization is garbage
-    for mod in model.modules():
-        if isinstance(mod, (nn.Conv2d, nn.Linear)):
-            mod.reset_parameters()
+    # Annoyingly we need to do this separately because HuggingFace doesn't support
+    # setting a nonzero momentum parameter for SGD!
+    if net_str == "regnet":
+        opt = optim.SGD(model.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-5)
+        schedule = get_cosine_schedule_with_warmup(opt, 0, args.max_steps)
+    else:
+        opt, schedule = None, None
+    
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Parameter count: {num_params:e}")
 
-    ds_str = val['real'].builder_name
     trainer = Trainer(
         model,
-        args=TrainingArguments(
-            output_dir=f"runs/{ds_str}/{net_str}",
-            adam_beta2=0.95,
-            fp16=True,
-            # Don't pin memory for GaussianMixture because it's already on the GPU
-            dataloader_pin_memory=False,
-            learning_rate=0.001,
-            logging_nan_inf_filter=False,
-            lr_scheduler_type="cosine",
-            max_steps=2**16,
-            per_device_train_batch_size=128,
-            remove_unused_columns=False,
-            run_name=f"{ds_str}-{net_str}",
-            save_strategy="no",
-            warmup_steps=2000,
-            weight_decay=0.05,
-        ),
-        callbacks=[LogSpacedCheckpoint()],
+        args=args,
+        #callbacks=[LogSpacedCheckpoint()],
         compute_metrics=lambda x: {
             "acc": np.mean(x.label_ids == np.argmax(x.predictions, axis=-1))
         },
+        optimizers=(opt, schedule),
         train_dataset=train,
         eval_dataset=val,
     )
     trainer.train()
-    trainer.evaluate(test)
+
+    if isinstance(test, Dataset):
+        trainer.evaluate(test)
 
 
 if __name__ == "__main__":
@@ -346,7 +444,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--nets",
         type=str,
-        choices=("convnext", "regnet", "resnet", "swin", "vit"),
+        # choices=("convnext", "regnet", "swin", "vit"),
         nargs="+",
     )
     parser.add_argument(

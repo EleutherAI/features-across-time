@@ -219,7 +219,7 @@ def plot_ngram_model_bpb(num_samples=1024):
                 )
             )
             fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
-            fig.write_image(Path.cwd() / "images" / f"{label}.pdf", format="pdf")
+            fig.write_image(Path.cwd() / "images" / f"{label}_{model_name}.pdf", format="pdf")
 
 
 def plot_divs():

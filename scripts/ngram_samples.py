@@ -374,9 +374,6 @@ def main(ngram_path: str, pile_path: str):
         df.to_csv(Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv")
 
 
-    plot_ngram_model_bpb(num_samples)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter

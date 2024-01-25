@@ -280,7 +280,7 @@ def ngram_model_worker(
         unigram_means.append(running_step_unigram_loss_mean)
         unigram_conf_intervals.append(
             get_confidence_intervals(
-                running_step_unigram_loss_mean, num_iters * batch * 2048
+                running_step_unigram_loss_mean, num_iters * batch
             )
         )
         bigram_means.append(running_step_bigram_loss_mean)

@@ -15,6 +15,7 @@ from plotly.subplots import make_subplots
 def adjust_confidence_intervals(
     df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=2048
 ):
+    print(df.head())
     """Adjust confidence intervals upwards for data with n token positions passed in"""
     df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) * np.sqrt(
         sample_size
@@ -22,6 +23,7 @@ def adjust_confidence_intervals(
     df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) * np.sqrt(
         sample_size
     ))
+    print(df.head())
     return df
 
 
@@ -56,18 +58,18 @@ def plot_bpb_subplots(df, num_samples=1024):
     tick_values, tick_texts = base_2_log_ticks(df["step"])
     bpb_coefficient = 0.3366084909549386 / math.log(2)
 
-    fig = make_subplots(rows=1, cols=2, shared_xaxes=True, shared_yaxes=True, subplot_titles=("Unigram model sequences", "Bigram model sequences"), horizontal_spacing=0.02)
+    fig = make_subplots(rows=1, cols=2, shared_xaxes=True, shared_yaxes=True, subplot_titles=("Unigram model sequences over training", "Bigram model sequences over training"), horizontal_spacing=0.02)
     for idx, ngram in enumerate(["unigram", "bigram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_top_conf"] = df[f"top_conf_{ngram}_loss"] * bpb_coefficient
         if ngram == "unigram":
-            adjust_models = ["pythia-14m", "pythia-70m", "pythia-160m", "pythia-410m", "pythia-1b"]
+            adjust_models = ["pythia-14m", "pythia-70m", "pythia-160m", "pythia-410m", "pythia-1b", "pythia-1.4b"]
             mask = df['model_name'].isin(adjust_models)
             df.loc[mask] = adjust_confidence_intervals(df[mask], f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
 
-        for i, model in enumerate(df['model_name'].unique()):
-            df_model = df[df['model_name'] == model]
+        for i, model in enumerate(df['pretty_model_name'].unique()):
+            df_model = df[df['pretty_model_name'] == model]
             color = px.colors.sequential.Plasma_r[i + 1]
             transparent_color = hex_to_rgba(color, opacity=0.2)
 
@@ -128,8 +130,8 @@ def plot_bpb(df, num_samples=1024):
             df.loc[mask] = adjust_confidence_intervals(df[mask], f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
 
         fig = go.Figure()
-        for i, model in enumerate(df['model_name'].unique()):
-            df_model = df[df['model_name'] == model]
+        for i, model in enumerate(df['pretty_model_name'].unique()):
+            df_model = df[df['pretty_model_name'] == model]
             color = px.colors.sequential.Plasma_r[i + 1] # Replace with dynamic color assignment if needed
             transparent_color = hex_to_rgba(color, opacity=0.2)
 
@@ -177,8 +179,8 @@ def plot_ngram_model(df, num_samples=1024):
 
         # Draw plot
         fig = go.Figure()
-        for i, model in enumerate(df['model_name'].unique()):
-            df_model = df[df['model_name'] == model]
+        for i, model in enumerate(df['pretty_model_name'].unique()):
+            df_model = df[df['pretty_model_name'] == model]
             color = px.colors.sequential.Plasma_r[i + 1] # Replace with dynamic color assignment if needed
             transparent_color = hex_to_rgba(color, opacity=0.2)
 
@@ -216,8 +218,8 @@ def main():
         ("pythia-410m", "410M"),
         ("pythia-1b", "1B"),
         ("pythia-1.4b", "1.4B"),
-        # ("pythia-2.8b", "2.8B")",
-        # ("pythia-6.9b", "6.9B")",
+        ("pythia-2.8b", "2.8B"),
+        # ("pythia-6.9b", "6.9B"),
         # ("pythia-12b", "12B"),
     ]
     model_dfs = []
@@ -225,7 +227,8 @@ def main():
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
-        model_df['model_name'] = pretty_model_name
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 

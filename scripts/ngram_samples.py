@@ -13,7 +13,6 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 from datasets import load_from_disk
 from optimum.bettertransformer import BetterTransformer
-from plot_steps import plot_ngram_model_bpb
 from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import GPTNeoXForCausalLM
@@ -258,6 +257,8 @@ def ngram_model_worker(
     num_iters = math.ceil(num_samples / batch)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
+        torch.cuda.synchronize()  # getting out of disk space error
+        # possibly from downloading model before the old one is deleted
         pile = iter(DataLoader(load_from_disk(pile_path), batch_size=batch))
         model = GPTNeoXForCausalLM.from_pretrained(
             f"EleutherAI/{model_name}",
@@ -352,7 +353,7 @@ def main(ngram_path: str, pile_path: str):
         # "pythia-160m": 4,
         # "pythia-410m": 4,
         # "pythia-1b": 4,
-        "pythia-12b": 2,
+        "pythia-12b": 1,
         # "pythia-6.9b": 2,
         # "pythia-2.8b": 4,
         # "pythia-1.4b": 8,
@@ -388,12 +389,10 @@ def main(ngram_path: str, pile_path: str):
                 batch,
                 d_vocab,
             )
-            for i in range(num_gpus)
+            for i in range(len(step_indices))
         ]
-        num_gpus = 1
-        args = args[:1]
-        print(f"Parallelising over {num_gpus} GPUs...")
-        with mp.Pool(num_gpus) as pool:
+        print(f"Parallelising over {len(step_indices)} GPUs...")
+        with mp.Pool(len(step_indices)) as pool:
             dfs = pool.starmap(ngram_model_worker, args)
 
         df = pd.concat(dfs)
@@ -403,8 +402,6 @@ def main(ngram_path: str, pile_path: str):
             / f"means_ngrams_model_{model_name}_{num_samples}.csv",
             index=False,
         )
-
-    plot_ngram_model_bpb(num_samples)
 
 
 if __name__ == "__main__":

@@ -3,24 +3,25 @@ import math
 import os
 import pickle
 from pathlib import Path
+import colorsys
+import time
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import colorsys
-import time
+from plotly.subplots import make_subplots
 
 def adjust_confidence_intervals(
     df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=2048
 ):
     """Adjust confidence intervals upwards for data with n token positions passed in"""
-    df[top_conf_col] = df[mean_col] + (df[top_conf_col] - df[mean_col]) * np.sqrt(
+    df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) * np.sqrt(
         sample_size
-    )
-    df[bottom_conf_col] = df[mean_col] - (df[mean_col] - df[bottom_conf_col]) * np.sqrt(
+    ))
+    df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) * np.sqrt(
         sample_size
-    )
+    ))
     return df
 
 
@@ -45,19 +46,25 @@ def hex_to_rgba(hex_color, opacity=0.5):
     return f'rgba({r}, {g}, {b}, {opacity})'
 
 
-from plotly.subplots import make_subplots
-
 def plot_bpb_subplots(df, num_samples=1024):
+    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
+    fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
+    fig.write_image(image_name, format="pdf")
+    time.sleep(2)
+
     tick_values, tick_texts = base_2_log_ticks(df["step"])
     bpb_coefficient = 0.3366084909549386 / math.log(2)
 
-    fig = make_subplots(rows=1, cols=2, shared_xaxes=True, subplot_titles=("Unigram", "Bigram"))
+    fig = make_subplots(rows=1, cols=2, shared_xaxes=True, shared_yaxes=True, subplot_titles=("Unigram model sequences", "Bigram model sequences"), horizontal_spacing=0.02)
     for idx, ngram in enumerate(["unigram", "bigram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_top_conf"] = df[f"top_conf_{ngram}_loss"] * bpb_coefficient
         if ngram == "unigram":
-            df = adjust_confidence_intervals(df, f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
+            adjust_models = ["pythia-14m", "pythia-70m", "pythia-160m", "pythia-410m", "pythia-1b"]
+            mask = df['model_name'].isin(adjust_models)
+            df.loc[mask] = adjust_confidence_intervals(df[mask], f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
 
         for i, model in enumerate(df['model_name'].unique()):
             df_model = df[df['model_name'] == model]
@@ -66,17 +73,35 @@ def plot_bpb_subplots(df, num_samples=1024):
 
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_top_conf'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx+1)
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_bottom_conf'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx+1)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color)), row=1, col=idx+1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color), showlegend=idx==0), row=1, col=idx+1)
 
     fig.update_layout(
-        yaxis_title="bits per byte",
+        # yaxis_title="bits per byte",
         xaxis_title="training step (1 step = 2<sup>21</sup> tokens)",
-        yaxis_range=[2, 8],
-        legend=dict(x=0.95, y=0.95, xanchor='right', yanchor='top')
+        yaxis_range=[2, 7],
+        legend=dict(x=0.95, y=0.95, xanchor='right', yanchor='top', font=dict(size=10)),
+        height=450,
+        width=1000
     )
+    # fig.update_yaxes(title_text="bits per byte", row=1, col=1)
+    fig.update_xaxes(title_text="", row=1, col=1)
+    fig.update_xaxes(title_text="", row=1, col=2)
+    fig.update_yaxes(title_text="bits per byte", row=1, col=1)
+
+    # Add a shared, centered x-axis label using an annotation
+    fig.add_annotation(
+        dict(
+            text="training step (1 step = 2<sup>21</sup> tokens)",
+            xref="paper", yref="paper",
+            x=0.5, y=-0.4,
+            showarrow=False,
+            font=dict(size=12)
+        )
+    )
+
+    fig.update_yaxes(showticklabels=False, row=1, col=2)
     fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
 
-    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
     fig.write_image(image_name, format="pdf")
 
 
@@ -204,10 +229,8 @@ def main():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    
-
-    plot_ngram_model(df)
-    plot_bpb(df)
+    # plot_ngram_model(df)
+    # plot_bpb(df)
     plot_bpb_subplots(df)
 
 

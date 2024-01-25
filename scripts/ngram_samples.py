@@ -363,18 +363,14 @@ def main(ngram_path: str, pile_path: str):
     for model_name, batch in model_batch_sizes.items():
         args = [
             (i, step_indices[i], model_name, ngram_path, pile_path, num_samples, batch, d_vocab)
-            for i in range(num_gpus)
+            for i in range(len(step_indices))
         ]
-        num_gpus = 1
-        args = args[:1]
-        print(f"Parallelising over {num_gpus} GPUs...")
-        with mp.Pool(num_gpus) as pool:
+        print(f"Parallelising over {len(step_indices)} GPUs...")
+        with mp.Pool(len(step_indices)) as pool:
             dfs = pool.starmap(ngram_model_worker, args)
 
-        with open(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}_{num_samples}.pkl", "wb") as f:
-            pickle.dump(pd.concat(dfs), f)
-
-    plot_ngram_model_bpb(num_samples)
+        df = pd.concat(dfs)
+        df.to_csv(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}_{num_samples}.csv")
 
 
 if __name__ == "__main__":

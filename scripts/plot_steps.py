@@ -76,7 +76,7 @@ def plot_shuffled_bpb():
     fig.write_image(Path.cwd() / "images" / "shuffled_bpb.png")
 
 
-def plot_ngram_model_bpb():
+def plot_ngram_model_bpb(num_samples=1024):
     model_names = [
         "pythia-14m",
         "pythia-70m",
@@ -92,7 +92,7 @@ def plot_ngram_model_bpb():
 
     # NN bias towards function of low frequency in the fourier domain
 
-        with open(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}.pkl", "rb") as f:
+        with open(Path.cwd() / "output" / f"step_ngrams_model_means_{model_name}_{num_samples}.pkl", "rb") as f:
             df = pickle.load(f)
 
         df.to_csv(Path.cwd() / "output" / f"means_ngrams_model_{model_name}.csv", index=False)

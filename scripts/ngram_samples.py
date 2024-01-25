@@ -13,12 +13,9 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 from plot_steps import plot_ngram_model_bpb
 from scipy import stats
-from transformers import AutoTokenizer, GPTNeoXForCausalLM, logging
-from datasets import load_from_disk, Dataset
-import time
+from transformers import AutoTokenizer, GPTNeoXForCausalLM
+from datasets import load_from_disk
 from optimum.bettertransformer import BetterTransformer
-from torch.profiler import profile, record_function, ProfilerActivity
-import gc
 from torch.utils.data import DataLoader
 
 
@@ -111,42 +108,50 @@ def kl_divergence(
     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
     """Compute the KL divergence between two sets of logits."""
-    log_p = logit_p.log_softmax(dim)
-    log_q = logit_q.log_softmax(dim)
-    return torch.nansum(log_p.exp() * (log_p - log_q), dim)
+    logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
+    logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
+    
+    return torch.nansum(
+        logit_p.sub(logsumexp_p).exp() * (logit_p.sub(logsumexp_p) - 
+                                          logit_q.sub(logsumexp_q)), dim)
 
 
 def js_divergence(
     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
-    """Compute the Jensen-Shannon divergence between two sets of logits."""
-    log_p = logit_p.log_softmax(dim)
-    log_q = logit_q.log_softmax(dim)
+    """Compute the Jensen-Shannon divergence between two sets of logits"""
+    # in place normalize logit vectors with -=
+    # check we're not using them elsewhere .sub_
+    logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
+    logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
 
     # Mean of P and Q
-    log_m = torch.stack([log_p, log_q]).sub(math.log(2)).logsumexp(0)
+    log_m = torch.stack([logit_p - logsumexp_p, logit_q - logsumexp_q]).sub(math.log(2)).logsumexp(0)
 
-    kl_p = torch.nansum(log_p.exp() * (log_p - log_m), dim)
-    kl_q = torch.nansum(log_q.exp() * (log_q - log_m), dim)
+    kl_p = torch.nansum((logit_p - logsumexp_p).exp() * (logit_p - logsumexp_p - log_m), dim)
+    kl_q = torch.nansum((logit_q - logsumexp_q).exp() * (logit_q - logsumexp_q - log_m), dim)
     return 0.5 * (kl_p + kl_q)
+    
 
-@torch.compile
 def one_hot_js_divergence(
     logit_q: torch.Tensor, p_index: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
-    log_q = logit_q.log_softmax(dim) 
-    p_denom = torch.tensor(math.e) + (log_q.size(dim) - 1)
+    logsumexp_q = logit_q.logsumexp(-1).unsqueeze(-1)
+
+    p_denom = torch.tensor(math.e) + (logit_q.size(dim) - 1)
     log_p_target = torch.tensor(math.e).div(p_denom).log()
     log_p_uniform = torch.tensor(1.0).div(p_denom).log()
 
     # accumulate log_m
-    log_m = log_q.sub(math.log(2)).exp()
+    log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
     log_m += log_p_uniform.sub(math.log(2)).exp()
-    # ((p_target - p_uniform) / 2) in log space
     log_m[:, p_index] += (
         log_p_target.sub(math.log(2)).exp() - 
         log_p_uniform.sub(math.log(2)).exp())
     log_m = log_m.log()
+
+    kl_q = torch.nansum(logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q) - log_m), dim)
+    
     # accumulate kl_p
     kl_p = -log_m
     kl_p += log_p_uniform
@@ -154,13 +159,9 @@ def one_hot_js_divergence(
     kl_p *= log_p_uniform.exp()
     kl_p[:, p_index] *= (log_p_target - log_p_uniform).exp()
     kl_p = torch.nansum(kl_p, dim)
-    kl_q = torch.nansum(log_q.exp() * (log_q - log_m), dim)
-    # torch.cuda.synchronize()
-    # print(torch.cuda.memory_allocated(0)) # 7 GB
     return 0.5 * (kl_p + kl_q)
 
 
-# @torch.compile
 def get_mean_divergences(
     tokens: torch.Tensor,
     logits: torch.Tensor,
@@ -180,14 +181,14 @@ def get_mean_divergences(
     del sample
 
     divergences.append(kl_divergence(bigram_dists, logits).mean())
-    divergences.append(js_divergence(bigram_dists, logits).mean()) 
+    # mean_js_divergence = (0.5 * (kl_divergence(bigram_dists, logits) + kl_divergence(logits, bigram_dists))).mean()
+    # print(mean_js_divergence, js_divergence(bigram_dists, logits).mean())
+    divergences.append(js_divergence(bigram_dists, logits).mean()) # uses extra 32-25 GB - mem bottleneck. unigrams might too
     del bigram_dists
-
+    
     unigram_dist = ngram_model.unigrams.log() + torch.finfo(torch.float32).eps
     divergences.append(kl_divergence(unigram_dist, logits).mean())
     divergences.append(js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean())
-    del unigram_dist
-
     labels = [
         "logit_token_js_div",
         "bigram_token_js_div",
@@ -222,7 +223,6 @@ def ngram_model_worker(
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, d_vocab, batch)
-
     unigram_means = []
     bigram_means = []
     unigram_conf_intervals = []
@@ -244,17 +244,14 @@ def ngram_model_worker(
     for step in steps:
         # with profile(activities=[ProfilerActivity.CUDA], profile_memory=True, record_shapes=True, with_stack=True) as prof:
         pile = iter(DataLoader(load_from_disk(pile_path), batch_size=batch))
-
         model = GPTNeoXForCausalLM.from_pretrained(
             f'EleutherAI/{model_name}', revision=f"step{step}", torch_dtype="auto", cache_dir=tmp_cache_dir
         ).cuda()
         model = BetterTransformer.transform(model)
-
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
         for _ in range(num_iters):
-        
             unigram_sample = ngram_model.generate_unigrams()
             unigram_outputs = model(unigram_sample)
             unigram_loss_mean = F.cross_entropy(
@@ -263,31 +260,22 @@ def ngram_model_worker(
                 reduction="mean",
             ).item()
             running_step_unigram_loss_mean += (unigram_loss_mean / num_iters)
-            del unigram_sample, unigram_outputs
             bigram_sample = ngram_model.generate_bigrams()
             bigram_outputs = model(bigram_sample)
-
             bigram_loss_mean = F.cross_entropy(
                 bigram_outputs.logits[:, :-1].flatten(0, 1),
                 bigram_sample[:, 1:].flatten(),
                 reduction="mean",
             ).item()
+            del bigram_outputs, bigram_sample, unigram_outputs, unigram_sample
             running_step_bigram_loss_mean += (bigram_loss_mean / num_iters)
-            del bigram_sample, bigram_outputs
             sample = next(pile)['input_ids'].cuda().to(torch.int32)
-            outputs = model(sample)
-            # print(torch.cuda.memory_allocated(gpu_id)) # 7 GB
+            logits = model(sample).logits
             divergences, _ = get_mean_divergences(
-                sample, outputs.logits, ngram_model, batch, d_vocab
+                sample, logits, ngram_model, batch, d_vocab
             )
             running_step_div_means += (divergences / num_iters).cpu()
             pbar.update(1)
-        # print("prof")
-        # print(
-        #     prof.key_averages(group_by_stack_n=5).table(row_limit=15, sort_by="cuda_memory_usage")) # group by top n stack trace entries
-        # prof.export_chrome_trace("trace.json")
-
-        # return
 
         unigram_means.append(running_step_unigram_loss_mean)
         unigram_conf_intervals.append(
@@ -318,7 +306,9 @@ def ngram_model_worker(
     div_top_conf_data = {
         f"top_conf_{label}": [interval[1] for interval in div_conf_intervals[label]] for label in div_labels
     }
-    data = {
+
+    return pd.DataFrame(
+        {
             "step": steps,
             "mean_unigram_loss": unigram_means,
             "mean_bigram_loss": bigram_means,
@@ -335,37 +325,31 @@ def ngram_model_worker(
             **div_mean_data,
             **div_bottom_conf_data,
             **div_top_conf_data
-        }
-
-    for label, blah in data.items():
-        print(label, len(blah))
-
-    return pd.DataFrame(
-        data    
+        }    
     )
 
 
 def main(ngram_path: str, pile_path: str):
     model_batch_sizes = {
-        "pythia-14m": 8,
-        # "pythia-70m": 32,
-        # "pythia-160m": 8,
-        # "pythia-410m": 16,
-        # "pythia-1b": 8,
-        # "pythia-1.4b": 8,
+        # "pythia-14m": 8,
+        # "pythia-70m": 8,
+        # "pythia-160m": 4,
+        # "pythia-410m": 4,
+        # "pythia-1b": 4,
+        "pythia-12b": 2,
+        # "pythia-6.9b": 2,
         # "pythia-2.8b": 4,
-        # "pythia-6.9b": 1,   
-        # "pythia-12b": 1,
+        # "pythia-1.4b": 8,
     }
     # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     d_vocab = 50277 # len(tokenizer.vocab)
     num_samples = 1024
 
-    log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
+    log_steps = [0] + [2 ** i for i in range(int(math.log2(256)) + 1)]
     linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
     # linear_steps = list(range(1000, 144000, 1000))
     # linear_steps.remove(116_000) # missing in 1B
-    steps = log_steps + linear_step_samples + [144_000]
+    steps = log_steps + linear_step_samples + [143_000]
 
     num_gpus = torch.cuda.device_count()
     mp.set_start_method("spawn")

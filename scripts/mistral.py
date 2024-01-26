@@ -1,9 +1,7 @@
-import math
 import pickle
 from pathlib import Path
 import argparse
 import os
-
 
 import numpy as np
 import pandas as pd
@@ -13,10 +11,10 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 from scipy import stats
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from optimum.bettertransformer import BetterTransformer
+
 
 class MistralNgramModel:
-    def __init__(self, path: str, batch=1, seq_len=2049):
+    def __init__(self, path: str, batch=1, seq_len=2048):
         self.decode_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
         self.encode_tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
         self.d_vocab = len(self.decode_tokenizer.vocab)
@@ -46,10 +44,14 @@ class MistralNgramModel:
         for i in range(self.batch):
             token_strs = self.decode_tokenizer.decode(tokens[i].tolist())
             tokens = torch.tensor(self.encode_tokenizer.encode(token_strs), device='cuda')
-            mistral_result.append(tokens[:2049])
-            if len(mistral_result[-1]) < 2049:
+            mistral_result.append(tokens[:self.seq_len])
+            if len(mistral_result[-1]) < self.seq_len:
                 print("short tensor unigrams! make sample longer evey time")
+        
         return torch.stack(mistral_result)
+    
+    def generate_random(self) -> torch.Tensor:
+        return torch.randint(0, len(self.encode_tokenizer.vocab), [self.batch, self.seq_len], device='cuda')
 
 
     # separate slice sparse array function with test
@@ -92,8 +94,8 @@ class MistralNgramModel:
         for i in range(self.batch):
             token_strs = self.decode_tokenizer.decode(result[i].tolist())
             tokens = torch.tensor(self.encode_tokenizer.encode(token_strs), device='cuda')
-            mistral_result.append(tokens[:2049])
-            if len(mistral_result[-1]) < 2049:
+            mistral_result.append(tokens[:self.seq_len])
+            if len(mistral_result[-1]) < self.seq_len:
                 print("short tensor! make sample longer evey time")
         return torch.stack(mistral_result)
 
@@ -114,7 +116,7 @@ def split_by_eod(
     return result
 
 
-def summary_stats(
+def positional_summary_stats(
     vectors: list[np.ndarray], target_length=2048
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     padded_vectors = [
@@ -129,16 +131,16 @@ def summary_stats(
 
 
 def get_sequence_losses(
-    model: AutoModelForCausalLM, sample: torch.Tensor, batch: int
+    model: AutoModelForCausalLM, sample: torch.Tensor, batch: int, seq_len=2048
 ) -> list[np.ndarray]:
     """Get sequence losses. Start a new sequence at each EOD token."""
     eod_indices = [torch.where(sample[i] == 2)[0] for i in range(len(sample))]
     outputs = model(sample)
     loss = F.cross_entropy(
-        outputs.logits[:, :-1].reshape(batch * 2048, -1),
-        sample[:, 1:].reshape(batch * 2048),
+        outputs.logits[:, :-1].reshape(batch * seq_len, -1),
+        sample[:, 1:].reshape(batch * seq_len),
         reduction="none",
-    ).reshape(batch, 2048)
+    ).reshape(batch, seq_len)
     return split_by_eod(loss, eod_indices)
 
 
@@ -147,49 +149,62 @@ def ngram_model_worker(
     model_path: str,
     num_samples: int,
     batch: int,
+    seq_len: int,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path(".cache")
     os.makedirs(tmp_cache_dir, exist_ok=True)
-    ngram_model = MistralNgramModel(model_path, batch=batch)
-
-    labels = ["unigram_loss", "bigram_loss"]
-    means = {label: [] for label in labels}
-    bottom_conf_intervals = {label: [] for label in labels}
-    top_conf_intervals = {label: [] for label in labels}
-    step_data = []
-    token_indices = []
+    ngram_model = MistralNgramModel(model_path, batch=batch, seq_len=seq_len + 1)
     model = AutoModelForCausalLM.from_pretrained(
         "mistralai/Mistral-7B-v0.1",
         torch_dtype="auto",
         cache_dir=tmp_cache_dir,
     ).cuda()
-    step_unigram_losses = []
-    step_bigram_losses = []
+
+    token_indices = []
+    labels = ["unigram_loss", "bigram_loss", "random_loss"]
+    means = {label: [] for label in labels}
+    bottom_conf_intervals = {label: [] for label in labels}
+    top_conf_intervals = {label: [] for label in labels}
+
+    unigram_losses = []
+    bigram_losses = []
+    random_losses = []
     for _ in tqdm.tqdm(range(num_samples // batch)):
         bigram_sample = ngram_model.generate_bigrams()
-        step_bigram_losses.extend(get_sequence_losses(model, bigram_sample, batch))
+        bigram_losses.extend(get_sequence_losses(model, bigram_sample, batch, seq_len))
         unigram_sample = ngram_model.generate_unigrams()
-        step_unigram_losses.extend(
-            get_sequence_losses(model, unigram_sample, batch)
+        unigram_losses.extend(
+            get_sequence_losses(model, unigram_sample, batch, seq_len)
+        )
+        random_sample = ngram_model.generate_random()
+        random_losses.extend(
+            get_sequence_losses(model, random_sample, batch, seq_len)
         )
 
-    mean_unigram_step_loss, unigram_conf_intervals = summary_stats(
-        step_unigram_losses, target_length=2048
+    mean_unigram_loss, unigram_conf_intervals = positional_summary_stats(
+        unigram_losses, target_length=seq_len
     )
-    means["unigram_loss"].extend(mean_unigram_step_loss)
+    means["unigram_loss"].extend(mean_unigram_loss)
     bottom_conf_intervals["unigram_loss"].extend(unigram_conf_intervals[0])
     top_conf_intervals["unigram_loss"].extend(unigram_conf_intervals[1])
 
-    mean_bigram_step_loss, bigram_conf_intervals = summary_stats(
-        step_bigram_losses, target_length=2048
+    mean_bigram_loss, bigram_conf_intervals = positional_summary_stats(
+        bigram_losses, target_length=seq_len
     )
-    means["bigram_loss"].extend(mean_bigram_step_loss)
+    means["bigram_loss"].extend(mean_bigram_loss)
     bottom_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[0])
     top_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[1])
 
-    token_indices.extend(list(range(2048)))
+    mean_random_loss, random_conf_intervals = positional_summary_stats(
+        random_losses, target_length=seq_len
+    )
+    means["random_loss"].extend(mean_random_loss)
+    bottom_conf_intervals["random_loss"].extend(random_conf_intervals[0])
+    top_conf_intervals["random_loss"].extend(random_conf_intervals[1])
 
-    index_data = {"step": step_data, "index": token_indices}
+    token_indices.extend(list(range(seq_len)))
+
+    index_data = {"index": token_indices}
     mean_data = {f"mean_{label}": means[label] for label in labels}
     bottom_conf_data = {
         f"bottom_conf_{label}": bottom_conf_intervals[label] for label in labels
@@ -203,15 +218,17 @@ def ngram_model_worker(
 def main(ngram_path: str):
     num_samples = 1024
     batch = 1
+    seq_len = 2048 # (2048 * 4)
 
     df = ngram_model_worker(
             ngram_path,
             num_samples,
-            batch)
+            batch,
+            seq_len)
     df.to_csv(
         Path.cwd()
         / "output"
-        / f"means_ngrams_model_{'mistral-7b'}_{num_samples}.csv",
+        / f"{'mistral-7b'}_{num_samples}.csv",
         index=False,
     )
 

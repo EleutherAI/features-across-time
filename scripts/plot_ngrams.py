@@ -13,19 +13,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def increase_confidence_intervals(
-    df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=2048
-):
-    """Adjust confidence intervals upwards for data with n token positions passed in"""
-    df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) * np.sqrt(
-        sample_size
-    ))
-    df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) * np.sqrt(
-        sample_size
-    ))
-    return df
-
-
 def decrease_confidence_intervals(
     df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=9
 ):
@@ -76,10 +63,6 @@ def plot_bpb_and_divergences(df, num_samples=1024):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_top_conf"] = df[f"top_conf_{ngram}_loss"] * bpb_coefficient
-        if ngram == "unigram":
-            adjust_models = ["pythia-14m", "pythia-70m", "pythia-160m", "pythia-410m", "pythia-1b", "pythia-1.4b"]
-            mask = df['model_name'].isin(adjust_models)
-            df.loc[mask] = increase_confidence_intervals(df[mask], f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
 
         for i, model in enumerate(df['pretty_model_name'].unique()):
             df_model = df[df['pretty_model_name'] == model]
@@ -137,16 +120,13 @@ def plot_bpb_and_divergences(df, num_samples=1024):
 
 def plot_token_divergences(df, num_samples=1024):
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-    image_name = Path.cwd() / "images" / "combined-divergences.pdf"
+    image_name = Path.cwd() / "images" / "token-model-divergences.pdf"
     fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
     fig.write_image(image_name, format="pdf")
     time.sleep(2)
 
     tick_values, tick_texts = base_2_log_ticks(df["step"])
-    bpb_coefficient = 0.3366084909549386 / math.log(2)
 
-
-    image_name = Path.cwd() / "images" / "token-model-divergence.pdf"
     token_div_metadata = [
         ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 0.8], 3, 2),
         ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 0.8], 3, 1),
@@ -154,6 +134,10 @@ def plot_token_divergences(df, num_samples=1024):
     fig = go.Figure()
     
     # The same on all Pythia models
+    bigram_token_df = df[df['pretty_model_name'] == df['pretty_model_name'].unique()[0]]
+    color = px.colors.sequential.Plasma_r[0]
+    transparent_color = hex_to_rgba(color, opacity=0.2)
+    label_bigram, pretty_label_bigram, _, _, _ = token_div_metadata[1]
     grouped_df = df.groupby('step').agg({f'top_conf_{label_bigram}': 'mean',
                                         f'bottom_conf_{label_bigram}': 'mean',
                                         f'mean_{label_bigram}': 'mean'}).reset_index()
@@ -169,18 +153,6 @@ def plot_token_divergences(df, num_samples=1024):
         go.Scatter(x=grouped_df['step'], y=grouped_df[f'bottom_conf_{label_bigram}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
     fig.add_trace(
         go.Scatter(x=grouped_df['step'], y=grouped_df[f'mean_{label_bigram}'], mode='lines', name="bigram model", line=dict(color=color), showlegend=True))
-        
-
-    bigram_token_df = df[df['pretty_model_name'] == df['pretty_model_name'].unique()[0]]
-    color = px.colors.sequential.Plasma_r[0]
-    transparent_color = hex_to_rgba(color, opacity=0.2)
-    label_bigram, pretty_label_bigram, _, _, _ = token_div_metadata[1]
-    fig.add_trace(
-        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'top_conf_{label_bigram}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(
-        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'bottom_conf_{label_bigram}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
-    fig.add_trace(
-        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'mean_{label_bigram}'], mode='lines', name="bigram model", line=dict(color=color), showlegend=True))
 
     label, pretty_label, y_range, row, col = token_div_metadata[0]
     for i, model in enumerate(df['pretty_model_name'].unique()):
@@ -229,7 +201,7 @@ def main():
         ("pythia-1.4b", "1.4B"),
         ("pythia-2.8b", "2.8B"),
         ("pythia-6.9b", "6.9B"),
-        # ("pythia-12b", "12B"),
+        ("pythia-12b", "12B"),
     ]
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:

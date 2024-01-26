@@ -15,7 +15,6 @@ from plotly.subplots import make_subplots
 def adjust_confidence_intervals(
     df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=2048
 ):
-    print(df.head())
     """Adjust confidence intervals upwards for data with n token positions passed in"""
     df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) * np.sqrt(
         sample_size
@@ -23,7 +22,6 @@ def adjust_confidence_intervals(
     df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) * np.sqrt(
         sample_size
     ))
-    print(df.head())
     return df
 
 
@@ -80,7 +78,7 @@ def plot_bpb_subplots(df, num_samples=1024):
     fig.update_layout(
         # yaxis_title="bits per byte",
         xaxis_title="training step (1 step = 2<sup>21</sup> tokens)",
-        yaxis_range=[2, 7],
+        yaxis_range=[2, 7.5],
         legend=dict(x=0.95, y=0.95, xanchor='right', yanchor='top', font=dict(size=10)),
         height=450,
         width=1000
@@ -105,6 +103,84 @@ def plot_bpb_subplots(df, num_samples=1024):
     fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
 
     fig.write_image(image_name, format="pdf")
+
+
+def plot_divergence_subplots(df, num_samples=1024):
+    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+    image_name = Path.cwd() / "images" / "combined-divergences.pdf"
+    fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
+    fig.write_image(image_name, format="pdf")
+    time.sleep(2)
+
+    tick_values, tick_texts = base_2_log_ticks(df["step"])
+    bpb_coefficient = 0.3366084909549386 / math.log(2)
+
+    div_metadata = [
+        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7], 1, 1),
+        ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7], 1, 2),
+        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 0.65], 2, 1),
+        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 0.65], 2, 2),
+        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 1.2], 3, 1),
+        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1.2], 3, 2)
+    ]
+    fig = make_subplots(
+        rows=3, 
+        cols=2, 
+        shared_xaxes=True, 
+        shared_yaxes=True, 
+        subplot_titles=(
+            [label[1] for label in div_metadata]
+        ), 
+        horizontal_spacing=0.02,
+        vertical_spacing=0.1
+    )
+    for idx, (label, pretty_label, y_range, row, col) in enumerate(div_metadata):
+        for i, model in enumerate(df['pretty_model_name'].unique()):
+            df_model = df[df['pretty_model_name'] == model]
+            color = px.colors.sequential.Plasma_r[i + 1]
+            transparent_color = hex_to_rgba(color, opacity=0.2)
+            fig.add_trace(
+                go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{label}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'),
+                row=row,
+                col=col)
+            fig.add_trace(
+                go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{label}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), 
+                row=row,
+                col=col)
+            fig.add_trace(
+                go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}'], mode='lines', name=model, line=dict(color=color), showlegend=False), # row==1 and col==2
+                row=row,
+                col=col)
+
+    fig.update_layout(
+        dict(
+            # legend=dict(x=0.95, y=0.95, xanchor='right', yanchor='top'),
+            height=600
+        ),
+    )
+    fig.update_xaxes(title_text="", row=1, col=1)
+    fig.update_xaxes(title_text="", row=1, col=2)
+    fig.update_yaxes(title_text="divergence", row=1, col=1)
+    fig.update_yaxes(title_text="divergence", row=2, col=1)
+    fig.update_yaxes(title_text="divergence", row=3, col=1)
+
+    fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
+
+    # Add a shared, centered x-axis label using an annotation
+    fig.add_annotation(
+        dict(
+            text="training step (1 step = 2<sup>21</sup> tokens)",
+            xref="paper", yref="paper",
+            x=0.5, y=-0.12,
+            showarrow=False,
+            font=dict(size=12)
+        )
+    )
+    fig.update_annotations(font=dict(size=12))
+
+
+    fig.write_image(image_name, format="pdf")
+
 
 
 def plot_bpb(df, num_samples=1024):
@@ -162,10 +238,10 @@ def plot_ngram_model(df, num_samples=1024):
     bpb_coefficient = 0.3366084909549386 / math.log(2)
 
     div_labels = [
-        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || logits'}}})$", [0, 7]),
+        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7]),
         ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7]),
-        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 1]),
-        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 1.2]),
+        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 0.65]),
+        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 0.65]),
         ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || token'}}})$", [0, 1.2]),
         ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1.2])
     ]
@@ -188,8 +264,6 @@ def plot_ngram_model(df, num_samples=1024):
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{label}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}'], mode='lines', name=model, line=dict(color=color)))
 
-        bigrams = 'bigrams'
-        logits = 'logits'
         fig.update_layout(
             {
                 "title": {
@@ -233,8 +307,9 @@ def main():
     df = pd.concat(model_dfs)
 
     # plot_ngram_model(df)
-    # plot_bpb(df)
-    plot_bpb_subplots(df)
+    plot_bpb(df)
+    # plot_bpb_subplots(df)
+    plot_divergence_subplots(df)
 
 
 if __name__ == "__main__":

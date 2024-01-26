@@ -132,10 +132,10 @@ def js_divergence(
     )
 
     kl_p = torch.nansum(
-        (logit_p - logsumexp_p).exp() * (logit_p - logsumexp_p - log_m), dim
+        logit_p.sub(logsumexp_p).exp() * (logit_p.sub(logsumexp_p).sub(log_m)), dim
     )
     kl_q = torch.nansum(
-        (logit_q - logsumexp_q).exp() * (logit_q - logsumexp_q - log_m), dim
+        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
     )
     return 0.5 * (kl_p + kl_q)
 
@@ -145,7 +145,7 @@ def mean_one_hot_js_divergence(
 ) -> torch.Tensor:
     logsumexp_q = logit_q.logsumexp(-1).unsqueeze(-1)
 
-    # accumulate log_m (starts not in log space)
+    # accumulate log_m (starts in linear space)
     log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
     log_m[torch.arange(batch * 2048), p_index] += 0.5
     log_m = log_m.log()

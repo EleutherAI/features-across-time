@@ -337,13 +337,13 @@ def ngram_model_worker(
 def main(ngram_path: str, pile_path: str):
     model_batch_sizes = {
         # "pythia-14m": 8,
-        # "pythia-70m": 8,
-        # "pythia-160m": 4,
-        # "pythia-410m": 4,
-        # "pythia-1b": 4,
+        "pythia-70m": 8,
+        "pythia-160m": 4,
+        "pythia-410m": 4,
+        "pythia-1b": 4,
         "pythia-12b": 1,
-        # "pythia-6.9b": 2,
-        # "pythia-2.8b": 4,
+        "pythia-6.9b": 2,
+        "pythia-2.8b": 4,
         # "pythia-1.4b": 8,
     }
     # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
@@ -398,7 +398,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
+        default="pythia-deduped-bigrams.pkl",
         help="Path to pickled sparse scipy array of bigram counts over the Pile",
     )
     parser.add_argument(

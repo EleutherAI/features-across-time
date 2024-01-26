@@ -235,15 +235,14 @@ def plot_bpb(df, num_samples=1024):
 
 def plot_ngram_model(df, num_samples=1024):
     tick_values, tick_texts = base_2_log_ticks(df["step"])
-    bpb_coefficient = 0.3366084909549386 / math.log(2)
 
     div_labels = [
-        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7]),
-        ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7]),
-        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 0.65]),
-        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 0.65]),
-        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || token'}}})$", [0, 1.2]),
-        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1.2])
+        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || logits'}}})$", [0, 12]),
+        ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 12]),
+        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 1]),
+        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 1]),
+        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || token'}}})$", [0, 1]),
+        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1])
     ]
 
     for (label, pretty_label, y_range) in div_labels:
@@ -306,10 +305,9 @@ def main():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    # plot_ngram_model(df)
-    plot_bpb(df)
+    plot_ngram_model(df)
+    # plot_bpb(df)
     # plot_bpb_subplots(df)
-    plot_divergence_subplots(df)
 
 
 if __name__ == "__main__":

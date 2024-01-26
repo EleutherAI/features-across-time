@@ -148,15 +148,14 @@ def mean_one_hot_js_divergence(
     # accumulate log_m (starts in linear space)
     log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
     log_m[torch.arange(batch * 2048), p_index] += 0.5
+    log_m += torch.finfo(torch.float32).eps
     log_m = log_m.log()
-
-    kl_q = torch.nansum(
-        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-    )
 
     # p * log(p / m) at p = 1 -> log(p) - log(m) = -log(m)
     kl_p = -log_m[torch.arange(batch * 2048), p_index]
-    # print(kl_p[:5], kl_q[:5])
+    kl_q = torch.nansum(
+        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
+    )
     return (0.5 * (kl_p + kl_q)).mean()
 
 

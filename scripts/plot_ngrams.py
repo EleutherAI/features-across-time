@@ -157,7 +157,12 @@ def plot_token_divergences(df, num_samples=1024):
     grouped_df = df.groupby('step').agg({f'top_conf_{label_bigram}': 'mean',
                                         f'bottom_conf_{label_bigram}': 'mean',
                                         f'mean_{label_bigram}': 'mean'}).reset_index()
-    grouped_df = decrease_confidence_intervals(grouped_df, )
+    grouped_df = decrease_confidence_intervals(
+        grouped_df, 
+        f'mean_{label_bigram}',
+        f'top_conf_{label_bigram}', 
+        f'bottom_conf_{label_bigram}'
+    )
     fig.add_trace(
         go.Scatter(x=grouped_df['step'], y=grouped_df[f'top_conf_{label_bigram}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
     fig.add_trace(

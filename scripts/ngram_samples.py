@@ -140,36 +140,24 @@ def js_divergence(
     return 0.5 * (kl_p + kl_q)
 
 
-def one_hot_js_divergence(
+def mean_one_hot_js_divergence(
     logit_q: torch.Tensor, p_index: torch.Tensor, batch: int, dim: int = -1
 ) -> torch.Tensor:
     logsumexp_q = logit_q.logsumexp(-1).unsqueeze(-1)
 
-    p_denom = torch.tensor(math.e) + (logit_q.size(dim) - 1)
-    log_p_target = torch.tensor(math.e).div(p_denom).log()
-    log_p_uniform = torch.tensor(1.0).div(p_denom).log()
-
-    # accumulate log_m
+    # accumulate log_m (starts not in log space)
     log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
-    log_m += log_p_uniform.sub(math.log(2)).exp()
-    log_m[torch.arange(batch * 2048), p_index] += (
-        log_p_target.sub(math.log(2)).exp() - log_p_uniform.sub(math.log(2)).exp()
-    )
+    log_m[torch.arange(batch * 2048), p_index] += 0.5
     log_m = log_m.log()
 
     kl_q = torch.nansum(
-        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q) - log_m), dim
+        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
     )
 
-    # accumulate kl_p
-    kl_p = -log_m
-    kl_p += log_p_uniform
-    kl_p[torch.arange(batch * 2048), p_index] += log_p_target - log_p_uniform
-    kl_p *= log_p_uniform.exp()
-    kl_p[torch.arange(batch * 2048), p_index] *= (log_p_target - log_p_uniform).exp()
-    kl_p = torch.nansum(kl_p, dim)
-
-    return 0.5 * (kl_p + kl_q)
+    # p * log(p / m) at p = 1 -> log(p) - log(m) = -log(m)
+    kl_p = -log_m[torch.arange(batch * 2048), p_index]
+    # print(kl_p[:5], kl_q[:5])
+    return (0.5 * (kl_p + kl_q)).mean()
 
 
 def get_mean_divergences(
@@ -188,9 +176,9 @@ def get_mean_divergences(
         ngram_model.get_bigram_dists(tokens[:, :-1].flatten()).log()
         + torch.finfo(torch.float32).eps
     )  # 0.2 GB (2048 * 50277 * 32)
-    divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
+    divergences.append(mean_one_hot_js_divergence(logits, sample, batch))
     divergences.append(
-        one_hot_js_divergence(bigram_dists, sample, batch).mean()
+        mean_one_hot_js_divergence(bigram_dists, sample, batch)
     )  # / probabilities by 2 and add 5
     del sample
 

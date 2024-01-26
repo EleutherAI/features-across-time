@@ -12,7 +12,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-def adjust_confidence_intervals(
+
+def increase_confidence_intervals(
     df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=2048
 ):
     """Adjust confidence intervals upwards for data with n token positions passed in"""
@@ -25,20 +26,23 @@ def adjust_confidence_intervals(
     return df
 
 
+def decrease_confidence_intervals(
+    df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=9
+):
+    """Adjust confidence intervals upwards for data with n token positions passed in"""
+    df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) / np.sqrt(
+        sample_size
+    ))
+    df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) / np.sqrt(
+        sample_size
+    ))
+    return df
+
+
 def base_2_log_ticks(values):
     max_val = np.log2(values.max())
     ticks = 2 ** np.arange(1, np.ceil(max_val) + 1)
     return ticks,  [f'2<sup>{int(i)}</sup>' for i in np.arange(1, np.ceil(max_val) + 1)]
-
-
-def lighten_hex_color(hex_color, lighten_percent=0.2):
-    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
-    h, l, s = colorsys.rgb_to_hls(r/255, g/255, b/255)
-    # Increase lightness
-    l = min(1, l + lighten_percent)
-    r, g, b = colorsys.hls_to_rgb(h, l, s)
-    # Convert RGB back to hex
-    return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
 
 
 def hex_to_rgba(hex_color, opacity=0.5):
@@ -46,7 +50,7 @@ def hex_to_rgba(hex_color, opacity=0.5):
     return f'rgba({r}, {g}, {b}, {opacity})'
 
 
-def plot_bpb_subplots(df, num_samples=1024):
+def plot_bpb_and_divergences(df, num_samples=1024):
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
     fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
@@ -75,7 +79,7 @@ def plot_bpb_subplots(df, num_samples=1024):
         if ngram == "unigram":
             adjust_models = ["pythia-14m", "pythia-70m", "pythia-160m", "pythia-410m", "pythia-1b", "pythia-1.4b"]
             mask = df['model_name'].isin(adjust_models)
-            df.loc[mask] = adjust_confidence_intervals(df[mask], f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
+            df.loc[mask] = increase_confidence_intervals(df[mask], f"mean_{ngram}_bpb", f"mean_{ngram}_bpb_bottom_conf", f"mean_{ngram}_bpb_top_conf")
 
         for i, model in enumerate(df['pretty_model_name'].unique()):
             df_model = df[df['pretty_model_name'] == model]
@@ -131,7 +135,7 @@ def plot_bpb_subplots(df, num_samples=1024):
     fig.write_image(image_name, format="pdf")
 
 
-def plot_divergence_subplots(df, num_samples=1024):
+def plot_token_divergences(df, num_samples=1024):
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
     image_name = Path.cwd() / "images" / "combined-divergences.pdf"
     fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
@@ -144,20 +148,34 @@ def plot_divergence_subplots(df, num_samples=1024):
 
     image_name = Path.cwd() / "images" / "token-model-divergence.pdf"
     token_div_metadata = [
-        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1.2], 3, 2),
-        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 1.2], 3, 1),
+        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 0.8], 3, 2),
+        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 0.8], 3, 1),
     ]
     fig = go.Figure()
     
     # The same on all Pythia models
+    grouped_df = df.groupby('step').agg({f'top_conf_{label_bigram}': 'mean',
+                                        f'bottom_conf_{label_bigram}': 'mean',
+                                        f'mean_{label_bigram}': 'mean'}).reset_index()
+    grouped_df = decrease_confidence_intervals(grouped_df, )
+    fig.add_trace(
+        go.Scatter(x=grouped_df['step'], y=grouped_df[f'top_conf_{label_bigram}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
+    fig.add_trace(
+        go.Scatter(x=grouped_df['step'], y=grouped_df[f'bottom_conf_{label_bigram}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
+    fig.add_trace(
+        go.Scatter(x=grouped_df['step'], y=grouped_df[f'mean_{label_bigram}'], mode='lines', name="bigram model", line=dict(color=color), showlegend=True))
+        
+
     bigram_token_df = df[df['pretty_model_name'] == df['pretty_model_name'].unique()[0]]
+    color = px.colors.sequential.Plasma_r[0]
+    transparent_color = hex_to_rgba(color, opacity=0.2)
     label_bigram, pretty_label_bigram, _, _, _ = token_div_metadata[1]
     fig.add_trace(
         go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'top_conf_{label_bigram}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
     fig.add_trace(
         go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'bottom_conf_{label_bigram}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
     fig.add_trace(
-        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'mean_{label_bigram}'], mode='lines', name=model, line=dict(color=color), showlegend=False))
+        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'mean_{label_bigram}'], mode='lines', name="bigram model", line=dict(color=color), showlegend=True))
 
     label, pretty_label, y_range, row, col = token_div_metadata[0]
     for i, model in enumerate(df['pretty_model_name'].unique()):
@@ -169,7 +187,7 @@ def plot_divergence_subplots(df, num_samples=1024):
         fig.add_trace(
             go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{label}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
         fig.add_trace(
-            go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}'], mode='lines', name=model, line=dict(color=color), showlegend=False))
+            go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}'], mode='lines', name=model, line=dict(color=color), showlegend=True))
 
     fig.update_layout(
             {
@@ -218,10 +236,8 @@ def main():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    # plot_ngram_model(df)
-    # plot_bpb(df)
-    # plot_bpb_subplots(df)
-    # plot_divergence_subplots(df)
+    plot_bpb_and_divergences(df)
+    plot_token_divergences(df)
 
 
 if __name__ == "__main__":

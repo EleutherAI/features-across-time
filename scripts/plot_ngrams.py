@@ -116,15 +116,13 @@ def plot_divergence_subplots(df, num_samples=1024):
     bpb_coefficient = 0.3366084909549386 / math.log(2)
 
     div_metadata = [
-        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7], 1, 1),
         ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7], 1, 2),
+        ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7], 1, 1),
         ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 0.65], 2, 1),
         ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 0.65], 2, 2),
-        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 1.2], 3, 1),
-        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1.2], 3, 2)
     ]
     fig = make_subplots(
-        rows=3, 
+        rows=2, 
         cols=2, 
         shared_xaxes=True, 
         shared_yaxes=True, 
@@ -155,7 +153,7 @@ def plot_divergence_subplots(df, num_samples=1024):
     fig.update_layout(
         dict(
             # legend=dict(x=0.95, y=0.95, xanchor='right', yanchor='top'),
-            height=600
+            height=400
         ),
     )
     fig.update_xaxes(title_text="", row=1, col=1)
@@ -171,14 +169,62 @@ def plot_divergence_subplots(df, num_samples=1024):
         dict(
             text="training step (1 step = 2<sup>21</sup> tokens)",
             xref="paper", yref="paper",
-            x=0.5, y=-0.12,
+            x=0.5, y=-0.25,
             showarrow=False,
             font=dict(size=12)
         )
     )
     fig.update_annotations(font=dict(size=12))
+    fig.write_image(image_name, format="pdf")
+
+    image_name = Path.cwd() / "images" / "token-model-divergence.pdf"
+    token_div_metadata = [
+        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 1.2], 3, 2),
+        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 1.2], 3, 1),
+    ]
+    fig = go.Figure()
+    
+    # The same on all Pythia models
+    bigram_token_df = df[df['pretty_model_name'] == df['pretty_model_name'].unique()[0]]
+    label_bigram, pretty_label_bigram, _, _, _ = token_div_metadata[1]
+    fig.add_trace(
+        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'top_conf_{label_bigram}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
+    fig.add_trace(
+        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'bottom_conf_{label_bigram}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
+    fig.add_trace(
+        go.Scatter(x=bigram_token_df['step'], y=bigram_token_df[f'mean_{label_bigram}'], mode='lines', name=model, line=dict(color=color), showlegend=False))
+
+    label, pretty_label, y_range, row, col = token_div_metadata[0]
+    for i, model in enumerate(df['pretty_model_name'].unique()):
+        df_model = df[df['pretty_model_name'] == model]
+        color = px.colors.sequential.Plasma_r[i + 1]
+        transparent_color = hex_to_rgba(color, opacity=0.2)
+        fig.add_trace(
+            go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{label}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
+        fig.add_trace(
+            go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{label}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
+        fig.add_trace(
+            go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}'], mode='lines', name=model, line=dict(color=color), showlegend=False))
+
+    fig.update_layout(
+            {
+            "title": {
+                'text': pretty_label, # f"$D_{{KL}}$({bigrams} || {logits})" # f"$D_{{KL}}(\t{{{bigrams} \| {logits}}})$", # f"D<sub>KL</sub>({pretty_label}) over training", 
+                'x': 0.5,
+                'y': 0.84,
+                'xanchor': 'center'
+            },
+            "yaxis_title": "Divergence",
+            "xaxis_title": "Training step (1 step = 2<sup>21</sup> tokens)",
+            "yaxis_range": y_range,
+            "legend": dict(x=0.95, y=0.95, xanchor='right', yanchor='top'),
+        }
+    )
 
 
+    fig.update_yaxes(title_text="divergence")
+    fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
+    fig.update_annotations(font=dict(size=12))
     fig.write_image(image_name, format="pdf")
 
 
@@ -305,7 +351,7 @@ def main():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    plot_ngram_model(df)
+    # plot_ngram_model(df)
     # plot_bpb(df)
     # plot_bpb_subplots(df)
 

@@ -1,6 +1,9 @@
 import math
 import pickle
 from pathlib import Path
+import argparse
+import os
+
 
 import numpy as np
 import pandas as pd
@@ -12,10 +15,10 @@ from scipy import stats
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-class MistralNgramModel:
-    def __init__(self, path: str, batch=1, seq_len=2048):
+class NgramModel:
+    def __init__(self, path: str, encode_tokenizer=None, batch=1, seq_len=2048):
         self.decode_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-        self.encode_tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1")
+        self.encode_tokenizer = AutoTokenizer.from_pretrained(encode_tokenizer)
         self.d_vocab = len(self.decode_tokenizer.vocab)
         self.batch = batch
         self.seq_len = seq_len
@@ -34,21 +37,14 @@ class MistralNgramModel:
             device="cuda",
         )  # 0.7 GB
 
+
     def generate_unigrams(self) -> torch.Tensor:
         tokens = torch.multinomial(
             self.unigrams, self.batch * self.seq_len, replacement=True
         ).reshape(self.batch, self.seq_len)
-
-        mistral_result = []
-        for i in range(self.batch):
-            token_strs = self.decode_tokenizer.decode(tokens[i].tolist())
-            tokens = torch.tensor(self.encode_tokenizer.encode(token_strs), device='cuda')
-            mistral_result.append(tokens[:self.seq_len])
-            if len(mistral_result[-1]) < self.seq_len:
-                print("short tensor unigrams! make sample longer evey time")
-        
-        return torch.stack(mistral_result)
+        return self.transcode(tokens)
     
+
     def generate_random(self) -> torch.Tensor:
         return torch.randint(0, len(self.encode_tokenizer.vocab), [self.batch, self.seq_len], device='cuda')
 
@@ -78,6 +74,7 @@ class MistralNgramModel:
         sampled_value_indices = torch.multinomial(token_probs, 1)
         return torch.gather(token_col_indices, 1, sampled_value_indices)
 
+
     def generate_bigrams(self) -> torch.Tensor:
         """Auto-regressively generate bigram model sequence. Initialize each
         sequence by sampling from a unigram model."""
@@ -89,14 +86,17 @@ class MistralNgramModel:
             result.append(self.sample_bigram(prev))
 
         result = torch.cat(result, dim=-1)
-        mistral_result = []
-        for i in range(self.batch):
-            token_strs = self.decode_tokenizer.decode(result[i].tolist())
-            tokens = torch.tensor(self.encode_tokenizer.encode(token_strs), device='cuda')
-            mistral_result.append(tokens[:self.seq_len])
-            if len(mistral_result[-1]) < self.seq_len:
-                print("short tensor! make sample longer evey time")
-        return torch.stack(mistral_result)
+        return self.transcode(result)
+
+
+    def transcode(self, tokens: torch.Tensor):
+        encoded_result = []
+        for i in range(len(tokens)):
+            token_strs = self.decode_tokenizer.decode(tokens[i].tolist())
+            encoded_tokens = torch.tensor(self.encode_tokenizer.encode(token_strs), device='cuda')
+            encoded_result.append(encoded_tokens[:self.seq_len])
+            assert len(encoded_result[-1]) >= self.seq_len, "Transcoded tokens too short; increase seq_length"
+        return torch.stack(encoded_result)
 
 
 def split_by_eod(
@@ -145,16 +145,19 @@ def get_sequence_losses(
 
 @torch.inference_mode()
 def ngram_model_worker(
+    model_name: str,
+    team: str,
     model_path: str,
     num_samples: int,
     batch: int,
     seq_len: int,
 ) -> pd.DataFrame:
+    hf_model_name = f'{team}/{model_name}',
     tmp_cache_dir = Path(".cache")
     os.makedirs(tmp_cache_dir, exist_ok=True)
-    ngram_model = MistralNgramModel(model_path, batch=batch, seq_len=seq_len + 1)
+    ngram_model = NgramModel(model_path, encode_tokenizer=hf_model_name, batch=batch, seq_len=seq_len + 1)
     model = AutoModelForCausalLM.from_pretrained(
-        "mistralai/Mistral-7B-v0.1",
+        hf_model_name,
         torch_dtype="auto",
         cache_dir=tmp_cache_dir,
     ).cuda()
@@ -215,11 +218,16 @@ def ngram_model_worker(
 
 
 def main(ngram_path: str):
+    model_name = "Mistral-7B-v0.1"
+    team = "mistralai"
+    
     num_samples = 1024
     batch = 1
     seq_len = 2048 # (2048 * 4)
 
     df = ngram_model_worker(
+            model_name,
+            team,
             ngram_path,
             num_samples,
             batch,
@@ -227,7 +235,7 @@ def main(ngram_path: str):
     df.to_csv(
         Path.cwd()
         / "output"
-        / f"{'mistral-7b'}_{num_samples}.csv",
+        / f"{model_name}_{num_samples}.csv",
         index=False,
     )
 

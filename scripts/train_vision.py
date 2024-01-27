@@ -204,6 +204,9 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
     # Convert to RGB so we don't have to think about it
     ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
 
+    # Convert to RGB so we don't have to think about it
+    ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
+
     # Infer the image size from the first image
     example = ds["train"][0][img_col]
     c, (h, w) = len(example.mode), example.size
@@ -279,7 +282,11 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
     val_sets = {
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
+        "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
+        "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "gaussian": gaussian,
+        "real": val,
+        "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
         "real": val,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
@@ -292,6 +299,8 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
 def run_model(
     train,
     val: dict[str, Dataset],
+    test: Dataset | None,
+    ds_str: str,
     test: Dataset | None,
     ds_str: str,
     net_str: str,
@@ -345,8 +354,28 @@ def run_model(
                 case other:
                     raise ValueError(f"Unknown ConvNeXt architecture {other}")
 
+            match arch:
+                case "atto" | "":  # default
+                    depths = [2, 2, 6, 2]
+                    hidden_sizes = [40, 80, 160, 320]
+                case "femto":
+                    depths = [2, 2, 6, 2]
+                    hidden_sizes = [48, 96, 192, 384]
+                case "pico":
+                    depths = [2, 2, 6, 2]
+                    hidden_sizes = [64, 128, 256, 512]
+                case "nano":
+                    depths = [2, 2, 8, 2]
+                    hidden_sizes = [80, 160, 320, 640]
+                case "tiny":
+                    depths = [3, 3, 9, 3]
+                    hidden_sizes = [96, 192, 384, 768]
+                case other:
+                    raise ValueError(f"Unknown ConvNeXt architecture {other}")
+
             cfg = ConvNextV2Config(
                 image_size=image_size,
+                depths=depths,
                 depths=depths,
                 drop_path_rate=0.1,
                 hidden_sizes=hidden_sizes,
@@ -415,6 +444,7 @@ def run_model(
                 downsample_layer=PatchMergingV2,
             )
             model = HfWrapper(swin)
+            model = HfWrapper(swin)
         case _:
             raise ValueError(f"Unknown net {net_str}")
 
@@ -434,10 +464,14 @@ def run_model(
             "acc": np.mean(x.label_ids == np.argmax(x.predictions, axis=-1))
         },
         optimizers=(opt, schedule),
+        optimizers=(opt, schedule),
         train_dataset=train,
         eval_dataset=val,
     )
     trainer.train()
+
+    if isinstance(test, Dataset):
+        trainer.evaluate(test)
 
     if isinstance(test, Dataset):
         trainer.evaluate(test)

@@ -140,7 +140,7 @@ def js_divergence(
     return 0.5 * (kl_p + kl_q)
 
 
-def mean_one_hot_js_divergence(
+def one_hot_js_divergence(
     logit_q: torch.Tensor, p_index: torch.Tensor, batch: int, dim: int = -1
 ) -> torch.Tensor:
     logsumexp_q = logit_q.logsumexp(-1).unsqueeze(-1)
@@ -156,7 +156,7 @@ def mean_one_hot_js_divergence(
     kl_q = torch.nansum(
         logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
     )
-    return (0.5 * (kl_p + kl_q)).mean()
+    return 0.5 * (kl_p + kl_q)
 
 
 def get_mean_divergences(
@@ -175,9 +175,9 @@ def get_mean_divergences(
         ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
         + torch.finfo(torch.float32).eps
     )  # 0.2 GB (2048 * 50277 * 32)
-    divergences.append(mean_one_hot_js_divergence(logits, sample, batch))
+    divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
     divergences.append(
-        mean_one_hot_js_divergence(bigram_dists, sample, batch)
+        one_hot_js_divergence(bigram_dists, sample, batch).mean()
     )  # / probabilities by 2 and add 5
     del sample
 

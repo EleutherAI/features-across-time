@@ -223,6 +223,10 @@ def ngram_model_worker(
     d_vocab: int,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path("/mnt/ssd-1/lucia/.cache") / str(gpu_id)
+    shutil.rmtree(
+        tmp_cache_dir, ignore_errors=True
+    )
+    
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, d_vocab, batch)

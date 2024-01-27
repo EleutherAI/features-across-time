@@ -144,7 +144,7 @@ def get_sequence_losses(
 
 
 @torch.inference_mode()
-def ngram_model_worker(
+def worker(
     model_name: str,
     team: str,
     model_path: str,
@@ -220,12 +220,12 @@ def ngram_model_worker(
 def main(ngram_path: str):
     model_name = "Mistral-7B-v0.1"
     team = "mistralai"
-    
+
     num_samples = 1024
     batch = 1
     seq_len = 2048 # (2048 * 4)
 
-    df = ngram_model_worker(
+    df = worker(
             model_name,
             team,
             ngram_path,

@@ -37,7 +37,7 @@ def hex_to_rgba(hex_color, opacity=0.5):
     return f'rgba({r}, {g}, {b}, {opacity})'
 
 
-def plot_bpb_and_divergences(df, num_samples=1024):
+def plot_bpb_and_divergences(df: pd.DataFrame):
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
     fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
@@ -45,7 +45,7 @@ def plot_bpb_and_divergences(df, num_samples=1024):
     time.sleep(2)
 
     tick_values, tick_texts = base_2_log_ticks(df["step"])
-    bpb_coefficient = 0.3366084909549386 / math.log(2)
+    bpb_coefficient = 0.3650388
 
     div_metadata = [
         ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7], 2, 2),
@@ -58,8 +58,7 @@ def plot_bpb_and_divergences(df, num_samples=1024):
         subplot_titles=["Unigram model sequences over training", "Bigram model sequences over training"] + [label[1] for label in div_metadata], 
         horizontal_spacing=0.02,
         vertical_spacing=0.05)
-    idx = 1
-    for ngram in ["unigram", "bigram"]:
+    for idx, ngram in enumerate(["unigram", "bigram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_top_conf"] = df[f"top_conf_{ngram}_loss"] * bpb_coefficient
@@ -69,10 +68,9 @@ def plot_bpb_and_divergences(df, num_samples=1024):
             color = px.colors.sequential.Plasma_r[i + 1]
             transparent_color = hex_to_rgba(color, opacity=0.2)
 
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_top_conf'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_bottom_conf'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color), showlegend=idx==2), row=1, col=idx)
-        idx += 1
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_top_conf'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_bottom_conf'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color), showlegend=idx==2), row=1, col=idx + 1)
 
     for label, pretty_label, y_range, row, col in div_metadata:
         for i, model in enumerate(df['pretty_model_name'].unique()):
@@ -118,7 +116,7 @@ def plot_bpb_and_divergences(df, num_samples=1024):
     fig.write_image(image_name, format="pdf")
 
 
-def plot_token_divergences(df, num_samples=1024):
+def plot_token_divergences(df: pd.DataFrame):
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
     image_name = Path.cwd() / "images" / "token-model-divergences.pdf"
     fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])

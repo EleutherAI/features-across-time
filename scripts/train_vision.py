@@ -301,8 +301,6 @@ def run_model(
     val: dict[str, Dataset],
     test: Dataset | None,
     ds_str: str,
-    test: Dataset | None,
-    ds_str: str,
     net_str: str,
     image_size: int,
     num_classes: int,
@@ -354,28 +352,8 @@ def run_model(
                 case other:
                     raise ValueError(f"Unknown ConvNeXt architecture {other}")
 
-            match arch:
-                case "atto" | "":  # default
-                    depths = [2, 2, 6, 2]
-                    hidden_sizes = [40, 80, 160, 320]
-                case "femto":
-                    depths = [2, 2, 6, 2]
-                    hidden_sizes = [48, 96, 192, 384]
-                case "pico":
-                    depths = [2, 2, 6, 2]
-                    hidden_sizes = [64, 128, 256, 512]
-                case "nano":
-                    depths = [2, 2, 8, 2]
-                    hidden_sizes = [80, 160, 320, 640]
-                case "tiny":
-                    depths = [3, 3, 9, 3]
-                    hidden_sizes = [96, 192, 384, 768]
-                case other:
-                    raise ValueError(f"Unknown ConvNeXt architecture {other}")
-
             cfg = ConvNextV2Config(
                 image_size=image_size,
-                depths=depths,
                 depths=depths,
                 drop_path_rate=0.1,
                 hidden_sizes=hidden_sizes,
@@ -444,7 +422,6 @@ def run_model(
                 downsample_layer=PatchMergingV2,
             )
             model = HfWrapper(swin)
-            model = HfWrapper(swin)
         case _:
             raise ValueError(f"Unknown net {net_str}")
 
@@ -464,14 +441,10 @@ def run_model(
             "acc": np.mean(x.label_ids == np.argmax(x.predictions, axis=-1))
         },
         optimizers=(opt, schedule),
-        optimizers=(opt, schedule),
         train_dataset=train,
         eval_dataset=val,
     )
     trainer.train()
-
-    if isinstance(test, Dataset):
-        trainer.evaluate(test)
 
     if isinstance(test, Dataset):
         trainer.evaluate(test)

@@ -162,120 +162,12 @@ def get_sequence_losses(
     return split_by_eod(loss, eod_indices)
 
 
-# def kl_divergence(
-#     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
-# ) -> torch.Tensor:
-#     """Compute the KL divergence between two sets of logits."""
-#     logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
-#     logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
-
-#     return torch.nansum(
-#         logit_p.sub(logsumexp_p).exp()
-#         * (logit_p.sub(logsumexp_p) - logit_q.sub(logsumexp_q)),
-#         dim,
-#     )
-
-
-# def js_divergence(
-#     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
-# ) -> torch.Tensor:
-#     """Compute the Jensen-Shannon divergence between two sets of logits"""
-#     logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
-#     logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
-
-#     # Mean of P and Q
-#     log_m = (
-#         torch.stack([logit_p - logsumexp_p, logit_q - logsumexp_q])
-#         .sub(math.log(2))
-#         .logsumexp(0)
-#     )
-
-#     kl_p = torch.nansum(
-#         logit_p.sub(logsumexp_p).exp() * (logit_p.sub(logsumexp_p).sub(log_m)), dim
-#     )
-#     kl_q = torch.nansum(
-#         logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-#     )
-#     return 0.5 * (kl_p + kl_q)
-
-
-# def one_hot_js_divergence(
-#     logit_q: torch.Tensor,
-#     p_index: torch.Tensor,
-#     batch: int,
-#     seq_len: int,
-#     dim: int = -1
-# ) -> torch.Tensor:
-#     logsumexp_q = logit_q.logsumexp(-1).unsqueeze(-1)
-
-#     # accumulate log_m (starting in linear space)
-#     log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
-#     log_m[torch.arange(batch * seq_len), p_index] += 0.5
-#     log_m += torch.finfo(torch.float32).eps
-#     log_m = log_m.log()
-
-#     # p * log(p / m) at p = 1 -> log(p) - log(m) = -log(m)
-#     kl_p = -log_m[torch.arange(batch * seq_len), p_index]
-#     kl_q = torch.nansum(
-#         logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-#     )
-#     return 0.5 * (kl_p + kl_q)
-
-
-# def get_sequence_divergences(
-#     tokens: torch.Tensor,
-#     logits: torch.Tensor,
-#     ngram_model: NgramModel,
-#     batch: int,
-#     d_vocab: int,
-#     seq_len: int
-# ) -> np.ndarray:
-#     divergences = []
-#     logits = logits[:, :-1, :d_vocab].flatten(
-#         0, 1
-#     )
-#     sample = tokens[:, 1:].flatten()
-#     bigram_dists = (
-#         ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
-#         + torch.finfo(torch.float32).eps
-#     )
-#    divergences.append(one_hot_js_divergence(logits, sample, batch, seq_len)
-#                       .reshape(batch, -1))
-#     divergences.append(
-#         one_hot_js_divergence(bigram_dists, sample, batch, seq_len).reshape(batch, -1)
-#     )
-#     del sample
-
-#     divergences.append(kl_divergence(bigram_dists, logits).reshape(batch, -1))
-#     divergences.append(
-#         js_divergence(bigram_dists, logits).reshape(batch, -1)
-#     )  # uses extra 32-25 GB - mem bottleneck. unigrams might too
-#     del bigram_dists
-
-# unigram_dist = ngram_model.unigrams + torch.finfo(torch.float32).eps
-# divergences.append(kl_divergence(unigram_dist, logits).reshape(batch, -1))
-# divergences.append(
-#     js_divergence(unigram_dist.repeat(seq_len * batch, 1), logits
-#                   ).reshape(batch, -1)
-# )
-# labels = [
-#     "logit_token_js_div",
-#     "bigram_token_js_div",
-#     "bigram_logit_kl_div",
-#     "bigram_logit_js_div",
-#     "unigram_logit_kl_div",
-#     "unigram_logit_js_div",
-# ]
-# return torch.stack(divergences), labels
-
-
 @torch.inference_mode()
 def multi_step_worker(
     gpu_id: int,
     model_name: str,
     team: str,
     ngram_path: str,
-    pile_path: str,
     tmp_cache_path: str,
     num_samples: int,
     batch: int,
@@ -286,7 +178,7 @@ def multi_step_worker(
     hf_model_name = f"{team}/{model_name}"
 
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
-    # shutil.rmtree(tmp_cache_dir, ignore_errors=True)
+    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
     tokenizer = LlamaTokenizer.from_pretrained(f"{team}/{model_name}")
@@ -299,21 +191,9 @@ def multi_step_worker(
     data["index"] = []
     data["step"] = []
 
-    # div_labels = [
-    #     "logit_token_js_div",
-    #     "bigram_token_js_div",
-    #     "bigram_logit_kl_div",
-    #     "bigram_logit_js_div",
-    #     "unigram_logit_kl_div",
-    #     "unigram_logit_js_div",
-    # ]
-    # div_means = {label: [] for label in div_labels}
-    # div_conf_intervals = {label: [] for label in div_labels}
-
     num_iters = math.ceil(num_samples / batch)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
-        # pile = iter(DataLoader(load_from_disk(pile_path), batch_size=batch))
         model = LlamaForCausalLM.from_pretrained(
             hf_model_name,
             revision=f"ckpt_{step}",
@@ -322,8 +202,6 @@ def multi_step_worker(
         ).cuda()
 
         step_losses = {label: [] for label in labels}
-
-        # step_div_means = torch.zeros(len(div_labels), seq_len - 1)
         generators = [
             ngram_model.generate_unigrams,
             ngram_model.generate_bigrams,
@@ -337,13 +215,6 @@ def multi_step_worker(
                 )
                 step_losses[label].extend(losses)
 
-            # sample = next(pile)["input_ids"].cuda()[:, :-1].to(torch.int32)
-            # print(sample.shape)
-            # logits = model(sample).logits
-            # divergences, _ = get_sequence_divergences(
-            #     sample, logits, ngram_model, batch, d_vocab, seq_len - 1
-            # )
-            # step_div_means += (divergences / num_iters).cpu()
             torch.cuda.synchronize()
             pbar.update(1)
 
@@ -358,32 +229,22 @@ def multi_step_worker(
             data[f"bottom_conf_{label}"].extend(conf_intervals[0])
             data[f"top_conf_{label}"].extend(conf_intervals[1])
 
-        # for i, label in enumerate(div_labels):
-        #     mean_div_loss, mean_div_conf_intervals = positional_summary_stats(
-        #         step_div_means[i], (seq_len - 1)
-        #     )
-        #     div_means[label].append(mean_div_loss)
-        #     div_conf_intervals[label].append(mean_div_conf_intervals)
-
         shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     pd.DataFrame(data)
 
 
-def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
+def main(ngram_path: str, tmp_cache_path: str):
     mp.set_start_method("spawn")
 
-    # model_name = "Mistral-7B-v0.1"
-    # team = "mistralai"
-    # model_batch_sizes = {f"pythia-14m-seed{i}": 8 for i in range(1, 10)}
-    # team = 'EleutherAI'
     team = "LLM360"
     model_batch_sizes = {"Amber": 1}
     tokenizer = LlamaTokenizer.from_pretrained("LLM360/Amber", revision="ckpt_356")
     vocab_size = tokenizer.vocab_size
+    # model_name = "Mistral-7B-v0.1"
+    # team = "mistralai"
+    # model_batch_sizes = {f"pythia-14m-seed{i}": 8 for i in range(1, 10)}
+    # team = 'EleutherAI'
 
-    num_samples = 1024
-    batch = 1
-    seq_len = 2048
     # Amber steps go from 0 to 359. Assuming linearly spaced (not specified)
     steps = ["000"] + [f"{2**i:03}" for i in range(int(math.log2(359)) + 1)] + ["359"]
     print(steps)
@@ -395,6 +256,9 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
 
+    num_samples = 1024
+    batch = 1
+    seq_len = 2048
     for model_name, batch in model_batch_sizes.items():
         args = [
             (
@@ -402,7 +266,6 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
                 model_name,
                 team,
                 ngram_path,
-                pile_path,
                 tmp_cache_path,
                 num_samples,
                 batch,
@@ -432,15 +295,15 @@ if __name__ == "__main__":
         default="pythia-deduped-bigrams.pkl",  # /mnt/ssd-1/lucia/
         help="Path to pickled sparse scipy array of bigram counts over the Pile",
     )
-    parser.add_argument(
-        "--pile_path",
-        default="val_tokenized.hf",  # '/mnt/ssd-1/lucia/val_tokenized.hf',
-        help="Path to Pile validation data",
-    )
+    # parser.add_argument(
+    #     "--pile_path",
+    #     default="val_tokenized.hf",  # '/mnt/ssd-1/lucia/val_tokenized.hf',
+    #     help="Path to Pile validation data",
+    # )
     parser.add_argument(
         "--tmp_cache_path",
         default=".cache",
         help="Path to cache which will be manually cleared",
     )
     args = parser.parse_args()
-    main(args.ngram_path, args.pile_path, args.tmp_cache_path)
+    main(args.ngram_path, args.tmp_cache_path)

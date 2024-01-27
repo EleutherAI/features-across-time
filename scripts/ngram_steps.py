@@ -143,7 +143,7 @@ def js_divergence(
 def one_hot_js_divergence(
     logit_q: torch.Tensor, p_index: torch.Tensor, batch: int, dim: int = -1
 ) -> torch.Tensor:
-    logsumexp_q = logit_q.logsumexp(-1).unsqueeze(-1)
+    logsumexp_q = logit_q.logsumexp(-1, keepdim=True)
 
     # accumulate log_m (starts in linear space)
     log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()

@@ -13,6 +13,7 @@ dependencies = [
     "scipy",
     "transformers",
     "optimum",
+    "pre-commit"
 ]
 version = "0.0.1"
 

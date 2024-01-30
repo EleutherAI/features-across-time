@@ -13,23 +13,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def decrease_confidence_intervals(
-    df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=9
-):
-    """Adjust confidence intervals upwards for data with n token positions passed in"""
-    df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) / np.sqrt(
-        sample_size
-    ))
-    df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) / np.sqrt(
-        sample_size
-    ))
-    return df
-
-
 def base_2_log_ticks(values):
     max_val = np.log2(values.max())
     ticks = 2 ** np.arange(1, np.ceil(max_val) + 1)
-    return ticks,  [f'2<sup>{int(i)}</sup>' for i in np.arange(1, np.ceil(max_val) + 1)]
+    return ticks,  [f'2<sup>{int(i)}</sup>' for i in np.arange(0, np.ceil(max_val) + 1)]
 
 
 def hex_to_rgba(hex_color, opacity=0.5):
@@ -37,12 +24,13 @@ def hex_to_rgba(hex_color, opacity=0.5):
     return f'rgba({r}, {g}, {b}, {opacity})'
 
 
-def plot_bpb_and_divergences(df: pd.DataFrame):
-    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+def plot_bpb_and_divergences(df: pd.DataFrame, debug: bool):
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
-    fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-    fig.write_image(image_name, format="pdf")
-    time.sleep(2)
+    if not debug:
+        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+        fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
+        fig.write_image(image_name, format="pdf")
+        time.sleep(2)
 
     tick_values, tick_texts = base_2_log_ticks(df["step"])
     bpb_coefficient = 0.3650388
@@ -50,8 +38,8 @@ def plot_bpb_and_divergences(df: pd.DataFrame):
     div_metadata = [
         ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7], 2, 2),
         ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7], 2, 1),
-        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 0.65], 3, 1),
-        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 0.65], 3, 2),
+        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 1], 3, 1),
+        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 1], 3, 2),
     ]
     fig = make_subplots(
         rows=3, cols=2, shared_xaxes=True, shared_yaxes=True, 
@@ -95,13 +83,13 @@ def plot_bpb_and_divergences(df: pd.DataFrame):
         height=1000, 
         legend=dict(x=0.98, y=0.98, xanchor='right', yanchor='top', font=dict(size=8), bgcolor='rgba(255, 255, 255, 0.85)')
     )
-    fig.update_xaxes(row=1, type="log", tickvals=tick_values, ticktext=tick_texts)
-    fig.update_xaxes(row=2, type="log", tickvals=tick_values, ticktext=tick_texts)
-    fig.update_yaxes(title_text="divergence", title_font=dict(size=12), title_standoff=10, col=1)
 
     fig.update_xaxes(title_text="", type="log", tickvals=tick_values, ticktext=tick_texts)
+    
     fig.update_yaxes(title_text="bits per byte", title_font=dict(size=12), title_standoff=10, row=1, col=1)
-    fig.update_yaxes(showticklabels=False, row=1, col=2)
+    fig.update_yaxes(title_text="divergence", title_font=dict(size=12), title_standoff=10, row=2, col=1)
+    fig.update_yaxes(title_text="divergence", title_font=dict(size=12), title_standoff=10, row=3, col=1)
+    fig.update_yaxes(range=[0.3, 0.8], row=3)
     # Add a shared, centered x-axis label
     fig.add_annotation(
         dict(
@@ -116,12 +104,13 @@ def plot_bpb_and_divergences(df: pd.DataFrame):
     fig.write_image(image_name, format="pdf")
 
 
-def plot_token_divergences(df: pd.DataFrame):
-    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+def plot_token_divergences(df: pd.DataFrame, debug: bool):
     image_name = Path.cwd() / "images" / "token-model-divergences.pdf"
-    fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-    fig.write_image(image_name, format="pdf")
-    time.sleep(2)
+    if not debug:
+        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+        fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
+        fig.write_image(image_name, format="pdf")
+        time.sleep(2)
 
     tick_values, tick_texts = base_2_log_ticks(df["step"])
 
@@ -139,6 +128,19 @@ def plot_token_divergences(df: pd.DataFrame):
     grouped_df = df.groupby('step').agg({f'top_conf_{label_bigram}': 'mean',
                                         f'bottom_conf_{label_bigram}': 'mean',
                                         f'mean_{label_bigram}': 'mean'}).reset_index()
+
+    def decrease_confidence_intervals(
+        df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=9
+    ):
+        """Adjust confidence intervals upwards for data with n token positions passed in"""
+        df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) / np.sqrt(
+            sample_size
+        ))
+        df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) / np.sqrt(
+            sample_size
+        ))
+        return df
+
     grouped_df = decrease_confidence_intervals(
         grouped_df, 
         f'mean_{label_bigram}',
@@ -187,7 +189,11 @@ def plot_token_divergences(df: pd.DataFrame):
 
 
 def main():
-    num_samples = 1024
+    # TODO add plot_in_context with Amber data
+
+    debug = True
+    bpb_num_samples = 1024
+    js_num_samples = 4096
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     model_metadata = [
@@ -204,15 +210,24 @@ def main():
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
+        js_df = pd.read_csv(
+            Path.cwd() / "output" / f"js_divs_ngrams_model_{model_name}_{js_num_samples}.csv"
+        )
+        
+        # Overwrite JS divergence data with larger sample size
+        common_columns = model_df.columns.intersection(js_df.columns)
+        model_df[common_columns] = js_df[common_columns]
+
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name
+
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    plot_bpb_and_divergences(df)
-    plot_token_divergences(df)
+    plot_bpb_and_divergences(df, debug)
+    plot_token_divergences(df, debug)
 
 
 if __name__ == "__main__":

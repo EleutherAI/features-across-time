@@ -24,8 +24,7 @@ def hex_to_rgba(hex_color, opacity=0.5):
     return f'rgba({r}, {g}, {b}, {opacity})'
 
 
-def plot_bpb_and_divergences(df: pd.DataFrame, debug: bool):
-    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
+def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qualitative=False):
     if not debug:
         # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
         fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
@@ -38,12 +37,10 @@ def plot_bpb_and_divergences(df: pd.DataFrame, debug: bool):
     div_metadata = [
         ("unigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'unigram model || Pythia'}}})$", [0, 7], 2, 2),
         ("bigram_logit_kl_div", f"$D_{{KL}}(\\text{{{'bigram model || Pythia'}}})$", [0, 7], 2, 1),
-        ("unigram_logit_js_div", f"$D_{{JS}}(\\text{{{'unigram model || Pythia'}}})$", [0, 1], 3, 1),
-        ("bigram_logit_js_div", f"$D_{{JS}}(\\text{{{'bigram model || Pythia'}}})$", [0, 1], 3, 2),
     ]
     fig = make_subplots(
-        rows=3, cols=2, shared_xaxes=True, shared_yaxes=True, 
-        subplot_titles=["Unigram model sequences over training", "Bigram model sequences over training"] + [label[1] for label in div_metadata], 
+        rows=2, cols=2, shared_xaxes=True, shared_yaxes=True, 
+        subplot_titles=["Unigram sequence loss across time", "Bigram sequence loss across time"] + [label[1] for label in div_metadata], 
         horizontal_spacing=0.02,
         vertical_spacing=0.05)
     for idx, ngram in enumerate(["unigram", "bigram"]):
@@ -53,17 +50,17 @@ def plot_bpb_and_divergences(df: pd.DataFrame, debug: bool):
 
         for i, model in enumerate(df['pretty_model_name'].unique()):
             df_model = df[df['pretty_model_name'] == model]
-            color = px.colors.sequential.Plasma_r[i + 1]
+            color = px.colors.qualitative.Plotly[i]  if qualitative else px.colors.sequential.Plasma_r[i + 1] 
             transparent_color = hex_to_rgba(color, opacity=0.2)
 
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_top_conf'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_bottom_conf'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color), showlegend=idx==2), row=1, col=idx + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
 
     for label, pretty_label, y_range, row, col in div_metadata:
         for i, model in enumerate(df['pretty_model_name'].unique()):
             df_model = df[df['pretty_model_name'] == model]
-            color = px.colors.sequential.Plasma_r[i + 1]
+            color = px.colors.qualitative.Plotly[i]  if qualitative else px.colors.sequential.Plasma_r[i + 1] 
             transparent_color = hex_to_rgba(color, opacity=0.2)
             fig.add_trace(
                 go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{label}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'),
@@ -86,9 +83,8 @@ def plot_bpb_and_divergences(df: pd.DataFrame, debug: bool):
 
     fig.update_xaxes(title_text="", type="log", tickvals=tick_values, ticktext=tick_texts)
     
-    fig.update_yaxes(title_text="bits per byte", title_font=dict(size=12), title_standoff=10, row=1, col=1)
-    fig.update_yaxes(title_text="divergence", title_font=dict(size=12), title_standoff=10, row=2, col=1)
-    fig.update_yaxes(title_text="divergence", title_font=dict(size=12), title_standoff=10, row=3, col=1)
+    fig.update_yaxes(title_text="Loss (bits per byte)", title_font=dict(size=12), title_standoff=10, row=1, col=1)
+    fig.update_yaxes(title_text="Divergence (bits per byte)", title_font=dict(size=12), title_standoff=10, row=2, col=1)
     fig.update_yaxes(range=[0.3, 0.8], row=3)
     # Add a shared, centered x-axis label
     fig.add_annotation(
@@ -104,94 +100,7 @@ def plot_bpb_and_divergences(df: pd.DataFrame, debug: bool):
     fig.write_image(image_name, format="pdf")
 
 
-def plot_token_divergences(df: pd.DataFrame, debug: bool):
-    image_name = Path.cwd() / "images" / "token-model-divergences.pdf"
-    if not debug:
-        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-        fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-        fig.write_image(image_name, format="pdf")
-        time.sleep(2)
-
-    tick_values, tick_texts = base_2_log_ticks(df["step"])
-
-    token_div_metadata = [
-        ("logit_token_js_div", f"$D_{{JS}}(\\text{{{'Pythia || token'}}})$", [0, 0.8], 3, 2),
-        ("bigram_token_js_div", f"$D_{{JS}}(\\text{{{'bigram model || tokens'}}})$", [0, 0.8], 3, 1),
-    ]
-    fig = go.Figure()
-    
-    # The same on all Pythia models
-    bigram_token_df = df[df['pretty_model_name'] == df['pretty_model_name'].unique()[0]]
-    color = px.colors.sequential.Plasma_r[0]
-    transparent_color = hex_to_rgba(color, opacity=0.2)
-    label_bigram, pretty_label_bigram, _, _, _ = token_div_metadata[1]
-    grouped_df = df.groupby('step').agg({f'top_conf_{label_bigram}': 'mean',
-                                        f'bottom_conf_{label_bigram}': 'mean',
-                                        f'mean_{label_bigram}': 'mean'}).reset_index()
-
-    def decrease_confidence_intervals(
-        df, mean_col: str, bottom_conf_col: str, top_conf_col: str, sample_size=9
-    ):
-        """Adjust confidence intervals upwards for data with n token positions passed in"""
-        df[top_conf_col] = df[mean_col] + ((df[top_conf_col] - df[mean_col]) / np.sqrt(
-            sample_size
-        ))
-        df[bottom_conf_col] = df[mean_col] - ((df[mean_col] - df[bottom_conf_col]) / np.sqrt(
-            sample_size
-        ))
-        return df
-
-    grouped_df = decrease_confidence_intervals(
-        grouped_df, 
-        f'mean_{label_bigram}',
-        f'top_conf_{label_bigram}', 
-        f'bottom_conf_{label_bigram}'
-    )
-    fig.add_trace(
-        go.Scatter(x=grouped_df['step'], y=grouped_df[f'top_conf_{label_bigram}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(
-        go.Scatter(x=grouped_df['step'], y=grouped_df[f'bottom_conf_{label_bigram}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
-    fig.add_trace(
-        go.Scatter(x=grouped_df['step'], y=grouped_df[f'mean_{label_bigram}'], mode='lines', name="bigram model", line=dict(color=color), showlegend=True))
-
-    label, pretty_label, y_range, row, col = token_div_metadata[0]
-    for i, model in enumerate(df['pretty_model_name'].unique()):
-        df_model = df[df['pretty_model_name'] == model]
-        color = px.colors.sequential.Plasma_r[i + 1]
-        transparent_color = hex_to_rgba(color, opacity=0.2)
-        fig.add_trace(
-            go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{label}'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
-        fig.add_trace(
-            go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{label}'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'))
-        fig.add_trace(
-            go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}'], mode='lines', name=model, line=dict(color=color), showlegend=True))
-
-    fig.update_layout(
-            {
-            "title": {
-                'text': pretty_label, # f"$D_{{KL}}$({bigrams} || {logits})" # f"$D_{{KL}}(\t{{{bigrams} \| {logits}}})$", # f"D<sub>KL</sub>({pretty_label}) over training", 
-                'x': 0.5,
-                'y': 0.84,
-                'xanchor': 'center'
-            },
-            "yaxis_title": "Divergence",
-            "xaxis_title": "Training step (1 step = 2<sup>21</sup> tokens)",
-            "yaxis_range": y_range,
-            "legend": dict(x=0.95, y=0.95, xanchor='right', yanchor='top'),
-        }
-    )
-
-
-    fig.update_yaxes(title_text="divergence")
-    fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
-    fig.update_annotations(font=dict(size=12))
-    fig.write_image(image_name, format="pdf")
-
-
-def main():
-    # TODO add plot_in_context with Amber data
-
-    debug = True
+def plot_model_sizes(debug: bool):
     bpb_num_samples = 1024
     js_num_samples = 4096
     os.makedirs(Path.cwd() / "images", exist_ok=True)
@@ -212,13 +121,28 @@ def main():
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
-        js_df = pd.read_csv(
-            Path.cwd() / "output" / f"js_divs_ngrams_model_{model_name}_{js_num_samples}.csv"
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
+
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+    
+    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
+    plot_bpb_and_divergences(df, image_name, debug)
+
+
+def plot_warmups(debug: bool):
+    num_samples = 1024
+
+    model_metadata = [
+        ("pythia-14m", "14M (fast warmup)"),
+        ("pythia-14m-warmup01", "14M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
-        
-        # Overwrite JS divergence data with larger sample size
-        common_columns = model_df.columns.intersection(js_df.columns)
-        model_df[common_columns] = js_df[common_columns]
 
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name
@@ -226,8 +150,34 @@ def main():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    plot_bpb_and_divergences(df, debug)
-    plot_token_divergences(df, debug)
+    image_name = Path.cwd() / "images" / "warmups-14m.pdf"
+    plot_bpb_and_divergences(df, image_name, debug, qualitative=True)
+
+    model_metadata = [
+        ("pythia-70m", "70M (fast warmup)"),
+        ("pythia-70m-warmup01", "70M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+        )
+
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
+
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+
+    image_name = Path.cwd() / "images" / "warmups-70m.pdf"
+    plot_bpb_and_divergences(df, image_name, debug, qualitative=True)
+
+
+def main():
+    debug = True
+
+    plot_model_sizes(debug)
+    plot_warmups(debug)
 
 
 if __name__ == "__main__":

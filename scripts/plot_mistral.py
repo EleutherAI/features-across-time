@@ -9,15 +9,15 @@ import plotly.graph_objects as go
 
 def main():
     num_samples = 1024
+    bpb_coefficient = 0.3650388
+
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
-    
     df = pd.read_csv(
         Path.cwd() / "output" / f"means_ngrams_model_{'mistral-7b'}_{num_samples}.csv"
     )
     filtered_df = df[df['index'] <= 10]
-
-    bpb_coefficient = 0.3366084909549386 / math.log(2)
+    
     labels = ["random", "unigram", "bigram"]
     for label in labels:
         df[f'{label}_grad'] = np.gradient(df[f'mean_{label}_loss'])

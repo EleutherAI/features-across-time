@@ -16,6 +16,7 @@ from optimum.bettertransformer import BetterTransformer
 from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, GPTNeoXForCausalLM
+from utils.divergences import js_divergence, kl_divergence, one_hot_js_divergence
 
 
 def batch_generator(dataset, batch_size):
@@ -24,14 +25,14 @@ def batch_generator(dataset, batch_size):
 
 
 class NgramModel:
-    def __init__(self, path: str, d_vocab: int, batch=1, seq_len=2049):
-        self.d_vocab = d_vocab
+    def __init__(self, path: str, batch=1, seq_len=2049):
+        self.tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+        self.d_vocab = len(self.tokenizer.vocab)
         self.batch = batch
         self.seq_len = seq_len
 
         with open(path, "rb") as f:
             bigram_counts = pickle.load(f)
-
         self.unigrams = (
             torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
         )
@@ -47,6 +48,10 @@ class NgramModel:
         return torch.multinomial(
             self.unigrams, self.batch * self.seq_len, replacement=True
         ).reshape(self.batch, self.seq_len)
+
+    def generate_unigram_strs(self) -> list[str]:
+        tokens = self.generate_unigrams()
+        return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
     def get_bigram_dists(self, prev: torch.Tensor) -> torch.Tensor:
         starts = self.bigrams.crow_indices()[prev]
@@ -98,61 +103,9 @@ class NgramModel:
             result.append(self.sample_bigram(prev))
         return torch.cat(result, dim=1)
 
-
-def kl_divergence(
-    logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
-) -> torch.Tensor:
-    """Compute the KL divergence between two sets of logits."""
-    logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
-    logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
-
-    return torch.nansum(
-        logit_p.sub(logsumexp_p).exp()
-        * (logit_p.sub(logsumexp_p) - logit_q.sub(logsumexp_q)),
-        dim,
-    )
-
-
-def js_divergence(
-    logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
-) -> torch.Tensor:
-    """Compute the Jensen-Shannon divergence between two sets of logits"""
-    logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
-    logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
-
-    # Mean of P and Q
-    log_m = (
-        torch.stack([logit_p - logsumexp_p, logit_q - logsumexp_q])
-        .sub(math.log(2))
-        .logsumexp(0)
-    )
-
-    kl_p = torch.nansum(
-        logit_p.sub(logsumexp_p).exp() * (logit_p.sub(logsumexp_p).sub(log_m)), dim
-    )
-    kl_q = torch.nansum(
-        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-    )
-    return 0.5 * (kl_p + kl_q)
-
-
-def one_hot_js_divergence(
-    logit_q: torch.Tensor, p_index: torch.Tensor, batch: int, dim: int = -1
-) -> torch.Tensor:
-    logsumexp_q = logit_q.logsumexp(-1, keepdim=True)
-
-    # accumulate log_m (starts in linear space)
-    log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
-    log_m[torch.arange(batch * 2048), p_index] += 0.5
-    log_m += torch.finfo(torch.float32).eps
-    log_m = log_m.log()
-
-    # p * log(p / m) at p = 1 -> log(p) - log(m) = -log(m)
-    kl_p = -log_m[torch.arange(batch * 2048), p_index]
-    kl_q = torch.nansum(
-        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-    )
-    return 0.5 * (kl_p + kl_q)
+    def generate_bigram_strs(self) -> list[str]:
+        tokens = self.generate_bigrams()
+        return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
 
 def get_mean_divergences(
@@ -208,17 +161,17 @@ def ngram_model_worker(
     model_name: str,
     model_path: str,
     pile_path: str,
+    tmp_cache_path: str,
     num_samples: int,
     batch: int,
     d_vocab: int,
-    tmp_cache_path: str,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
-    ngram_model = NgramModel(model_path, d_vocab, batch)
-
+    ngram_model = NgramModel(model_path, batch)
+    print("in worker")
     unigram_means = []
     bigram_means = []
     unigram_conf_intervals = []
@@ -245,7 +198,6 @@ def ngram_model_worker(
             cache_dir=tmp_cache_dir,
         ).cuda()
         model = BetterTransformer.transform(model)
-
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
@@ -365,10 +317,10 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
                 model_name,
                 ngram_path,
                 pile_path,
+                tmp_cache_path,
                 num_samples,
                 batch,
                 d_vocab,
-                tmp_cache_path,
             )
             for i in range(len(step_indices))
         ]

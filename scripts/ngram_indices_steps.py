@@ -1,7 +1,6 @@
 import argparse
 import math
 import os
-import pickle
 import shutil
 from pathlib import Path
 
@@ -11,6 +10,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import tqdm.auto as tqdm
+from ngram_steps import NgramModel
 from scipy import stats
 from transformers import (
     AutoTokenizer,
@@ -19,77 +19,6 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
 )
-
-
-class NgramModel:
-    def __init__(self, bigram_path: str, batch=1, seq_len=2048):
-        self.tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-        self.batch = batch
-        self.seq_len = seq_len
-
-        with open(bigram_path, "rb") as f:
-            bigram_counts = pickle.load(f)
-
-        self.unigrams = (
-            torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
-        )
-        self.bigrams = torch.sparse_csr_tensor(
-            bigram_counts.indptr.astype(np.int64),
-            bigram_counts.indices.astype(np.int64),
-            bigram_counts.data.astype(np.float32),
-            dtype=torch.float32,
-            device="cuda",
-        )
-
-    def generate_unigrams(self) -> torch.Tensor:
-        return torch.multinomial(
-            self.unigrams, self.batch * self.seq_len, replacement=True
-        ).reshape(self.batch, self.seq_len)
-
-    def generate_unigram_strs(self) -> list[str]:
-        tokens = self.generate_unigrams()
-        return [self.tokenizer.decode(row.tolist()) for row in tokens]
-
-    # TODO separate slice sparse array function and add tests
-    def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
-        """Given a batch of previous tokens, sample from a bigram model
-        using conditional distributions stored in a sparse CSR tensor."""
-        starts = self.bigrams.crow_indices()[prev]
-        ends = self.bigrams.crow_indices()[prev + 1]
-
-        # Pad rows with variable numbers of non-zero elements (0s are ignored)
-        token_probs = torch.zeros(
-            (self.batch, len(self.tokenizer.vocab)), dtype=torch.float32, device="cuda"
-        )
-        token_col_indices = torch.zeros(
-            (self.batch, len(self.tokenizer.vocab)), dtype=torch.int32, device="cuda"
-        )
-        for i in range(self.batch):
-            token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
-                starts[i] : ends[i]
-            ]
-            token_col_indices[i, : ends[i] - starts[i]] = self.bigrams.col_indices()[
-                starts[i] : ends[i]
-            ]
-
-        sampled_value_indices = torch.multinomial(token_probs, 1)
-        return torch.gather(token_col_indices, 1, sampled_value_indices)
-
-    def generate_bigrams(self) -> torch.Tensor:
-        """Auto-regressively generate bigram model sequence. Initialize each
-        sequence by sampling from a unigram model."""
-        result = [
-            torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)
-        ]
-        for _ in range(self.seq_len - 1):
-            prev = result[-1]
-            result.append(self.sample_bigram(prev))
-
-        return torch.cat(result, dim=-1)
-
-    def generate_bigram_strs(self) -> list[str]:
-        tokens = self.generate_bigrams()
-        return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
 
 def encode(input: list[str], encoder: PreTrainedTokenizer, seq_len: int):

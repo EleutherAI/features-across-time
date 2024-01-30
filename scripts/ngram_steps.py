@@ -15,7 +15,7 @@ from datasets import load_from_disk
 from optimum.bettertransformer import BetterTransformer
 from scipy import stats
 from torch.utils.data import DataLoader
-from transformers import GPTNeoXForCausalLM
+from transformers import AutoTokenizer, GPTNeoXForCausalLM
 
 
 def batch_generator(dataset, batch_size):
@@ -34,14 +34,14 @@ class NgramModel:
 
         self.unigrams = (
             torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
-        )  # small
+        )
         self.bigrams = torch.sparse_csr_tensor(
             bigram_counts.indptr.astype(np.int64),
             bigram_counts.indices.astype(np.int64),
             bigram_counts.data.astype(np.float32),
             dtype=torch.float32,
             device="cuda",
-        )  # 0.7 GB
+        )
 
     def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(
@@ -53,11 +53,9 @@ class NgramModel:
         ends = self.bigrams.crow_indices()[prev + 1]
 
         # 0 padding to batch rows with variable numbers of non-zero elements
-        # prev: 8 * 2048, 50000, 32 [batch seq d_vocab float32]
-        # bigram_dists: 8 * 2048, 50000, 32
         bigram_dists = torch.zeros(
             (len(prev), self.d_vocab), dtype=torch.float32, device="cuda"
-        )  # 0.2 GB
+        )
         for i in range(len(prev)):
             filled_col_indices = self.bigrams.col_indices()[starts[i] : ends[i]]
             filled_col_values = self.bigrams.values()[starts[i] : ends[i]]
@@ -119,8 +117,6 @@ def js_divergence(
     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
     """Compute the Jensen-Shannon divergence between two sets of logits"""
-    # in place normalize logit vectors with -=
-    # check we're not using them elsewhere .sub_
     logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
     logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
 
@@ -167,24 +163,18 @@ def get_mean_divergences(
     d_vocab: int,
 ) -> np.ndarray:
     divergences = []
-    logits = logits[:, :-1, :d_vocab].flatten(
-        0, 1
-    )  # NANs # 0.2 GB * batch (2048 * 50277 * 16)
+    logits = logits[:, :-1, :d_vocab].flatten(0, 1)
     sample = tokens[:, 1:].flatten()
     bigram_dists = (
         ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
         + torch.finfo(torch.float32).eps
-    )  # 0.2 GB (2048 * 50277 * 32)
+    )
     divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
-    divergences.append(
-        one_hot_js_divergence(bigram_dists, sample, batch).mean()
-    )  # / probabilities by 2 and add 5
+    divergences.append(one_hot_js_divergence(bigram_dists, sample, batch).mean())
     del sample
 
     divergences.append(kl_divergence(bigram_dists, logits).mean())
-    divergences.append(
-        js_divergence(bigram_dists, logits).mean()
-    )  # uses extra 32-25 GB - mem bottleneck. unigrams might too
+    divergences.append(js_divergence(bigram_dists, logits).mean())
     del bigram_dists
 
     unigram_dist = ngram_model.unigrams + torch.finfo(torch.float32).eps
@@ -221,20 +211,18 @@ def ngram_model_worker(
     num_samples: int,
     batch: int,
     d_vocab: int,
+    tmp_cache_path: str,
 ) -> pd.DataFrame:
-    tmp_cache_dir = Path("/mnt/ssd-1/lucia/.cache") / str(gpu_id)
-    shutil.rmtree(
-        tmp_cache_dir, ignore_errors=True
-    )
-    
+    tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
+    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, d_vocab, batch)
+
     unigram_means = []
     bigram_means = []
     unigram_conf_intervals = []
     bigram_conf_intervals = []
-
     div_labels = [
         "logit_token_js_div",
         "bigram_token_js_div",
@@ -249,8 +237,6 @@ def ngram_model_worker(
     num_iters = math.ceil(num_samples / batch)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
-        torch.cuda.synchronize()  # getting out of disk space error
-        # possibly from downloading model before the old one is deleted
         pile = iter(DataLoader(load_from_disk(pile_path), batch_size=batch))
         model = GPTNeoXForCausalLM.from_pretrained(
             f"EleutherAI/{model_name}",
@@ -259,6 +245,7 @@ def ngram_model_worker(
             cache_dir=tmp_cache_dir,
         ).cuda()
         model = BetterTransformer.transform(model)
+
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
@@ -338,26 +325,27 @@ def ngram_model_worker(
     )
 
 
-def main(ngram_path: str, pile_path: str):
+def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     model_batch_sizes = {
-        # "pythia-14m": 8,
+        "pythia-14m": 8,
         "pythia-70m": 8,
         "pythia-160m": 4,
         "pythia-410m": 4,
         "pythia-1b": 4,
-        "pythia-12b": 1,
-        "pythia-6.9b": 2,
+        "pythia-1.4b": 8,
         "pythia-2.8b": 4,
-        # "pythia-1.4b": 8,
+        "pythia-6.9b": 2,
+        "pythia-12b": 1,
+        # "pythia-14m-warmup01": 8,
+        # "pythia-70m-warmup01": 8
     }
-    # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    d_vocab = 50277  # len(tokenizer.vocab)
+    # model_batch_sizes = {f"pythia-14m-seed{i}": 8 for i in range(1, 10)}
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    d_vocab = len(tokenizer.vocab)  # 50277
     num_samples = 1024
 
     log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
     linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
-    # linear_steps = list(range(1000, 144000, 1000))
-    # linear_steps.remove(116_000) # missing in 1B
     steps = log_steps + linear_step_samples + [143_000]
 
     num_gpus = torch.cuda.device_count()
@@ -380,6 +368,7 @@ def main(ngram_path: str, pile_path: str):
                 num_samples,
                 batch,
                 d_vocab,
+                tmp_cache_path,
             )
             for i in range(len(step_indices))
         ]
@@ -407,8 +396,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--pile_path",
-        default="val_tokenized.hf",  # '/mnt/ssd-1/lucia/val_tokenized.hf',
+        default="val_tokenized.hf",
         help="Path to Pile validation data",
     )
+    parser.add_argument(
+        "--tmp_cache_path",
+        default=".cache",
+        help="Path to cache (repeatedly cleared to free disk space)",
+    )
     args = parser.parse_args()
-    main(args.ngram_path, args.pile_path)
+    main(args.ngram_path, args.pile_path, args.tmp_cache_path)

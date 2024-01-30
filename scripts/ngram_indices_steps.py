@@ -166,7 +166,6 @@ def multi_step_worker(
 
         token_indices.extend(list(range(seq_len - 1)))
         step_indices.extend([int(step)] * (seq_len - 1))
-
         mean_unigram_loss, unigram_conf_intervals = positional_summary_stats(
             step_unigram_losses, (seq_len - 1)
         )

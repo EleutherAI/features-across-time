@@ -83,13 +83,13 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
 
     fig.update_xaxes(title_text="", type="log", tickvals=tick_values, ticktext=tick_texts)
     
-    fig.update_yaxes(title_text="Loss (bits per byte)", title_font=dict(size=12), title_standoff=10, row=1, col=1)
-    fig.update_yaxes(title_text="Divergence (bits per byte)", title_font=dict(size=12), title_standoff=10, row=2, col=1)
+    fig.update_yaxes(title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1)
+    fig.update_yaxes(title_text="KL divergence", title_font=dict(size=12), title_standoff=10, row=2, col=1)
     fig.update_yaxes(range=[0.3, 0.8], row=3)
     # Add a shared, centered x-axis label
     fig.add_annotation(
         dict(
-            text="training step (1 step = 2<sup>21</sup> tokens)",
+            text="Training step", # (1 step = 2<sup>21</sup> tokens)",
             xref="paper", yref="paper",
             x=0.5, y=-0.05,
             showarrow=False,

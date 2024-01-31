@@ -12,7 +12,6 @@ import torch.multiprocessing as mp
 import torch.nn.functional as F
 import tqdm.auto as tqdm
 from datasets import load_from_disk
-from optimum.bettertransformer import BetterTransformer
 from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, GPTNeoXForCausalLM
@@ -43,6 +42,7 @@ class NgramModel:
             dtype=torch.float32,
             device="cuda",
         )
+        self.bigram_samples = np.load('bigram-sequences.npy')
 
     def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(
@@ -67,41 +67,44 @@ class NgramModel:
             bigram_dists[i][filled_col_indices] = filled_col_values
         return bigram_dists
 
-    # separate slice sparse array function with test
-    def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
-        """Given a batch of previous tokens, sample from a bigram model
-        using conditional distributions stored in a sparse CSR tensor."""
-        starts = self.bigrams.crow_indices()[prev]
-        ends = self.bigrams.crow_indices()[prev + 1]
+    # # separate slice sparse array function with test
+    # def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
+    #     """Given a batch of previous tokens, sample from a bigram model
+    #     using conditional distributions stored in a sparse CSR tensor."""
+    #     starts = self.bigrams.crow_indices()[prev]
+    #     ends = self.bigrams.crow_indices()[prev + 1]
 
-        # 0 padding to batch rows with variable numbers of non-zero elements
-        token_probs = torch.zeros(
-            (self.batch, self.d_vocab), dtype=torch.float32, device="cuda"
-        )
-        token_col_indices = torch.zeros(
-            (self.batch, self.d_vocab), dtype=torch.int32, device="cuda"
-        )
-        for i in range(self.batch):
-            token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
-                starts[i] : ends[i]
-            ]
-            token_col_indices[i, : ends[i] - starts[i]] = self.bigrams.col_indices()[
-                starts[i] : ends[i]
-            ]
+    #     # 0 padding to batch rows with variable numbers of non-zero elements
+    #     token_probs = torch.zeros(
+    #         (self.batch, self.d_vocab), dtype=torch.float32, device="cuda"
+    #     )
+    #     token_col_indices = torch.zeros(
+    #         (self.batch, self.d_vocab), dtype=torch.int32, device="cuda"
+    #     )
+    #     for i in range(self.batch):
+    #         token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
+    #             starts[i] : ends[i]
+    #         ]
+    #         token_col_indices[i, : ends[i] - starts[i]] = self.bigrams.col_indices()[
+    #             starts[i] : ends[i]
+    #         ]
 
-        sampled_value_indices = torch.multinomial(token_probs, 1)
-        return torch.gather(token_col_indices, 1, sampled_value_indices)
+    #     sampled_value_indices = torch.multinomial(token_probs, 1)
+    #     return torch.gather(token_col_indices, 1, sampled_value_indices)
 
-    def generate_bigrams(self) -> torch.Tensor:
+    def generate_bigrams(self, i: int) -> torch.Tensor:
         """Auto-regressively generate bigram model sequence. Initialize each
         sequence by sampling from a unigram model."""
-        result = [
-            torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)
-        ]
-        for _ in range(self.seq_len - 1):
-            prev = result[-1]
-            result.append(self.sample_bigram(prev))
-        return torch.cat(result, dim=1)
+        # i should range from 0 to 1024/2
+        batch = self.bigram_samples[i * self.batch: (i * self.batch) + self.batch, :50277]
+        return torch.tensor(batch, device="cuda").long()
+        # result = [
+        #     torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)
+        # ]
+        # for _ in range(self.seq_len - 1):
+        #     prev = result[-1]
+        #     result.append(self.sample_bigram(prev))
+        # return torch.cat(result, dim=1)
 
     def generate_bigram_strs(self) -> list[str]:
         tokens = self.generate_bigrams()
@@ -171,7 +174,7 @@ def ngram_model_worker(
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, batch)
-    print("in worker")
+
     unigram_means = []
     bigram_means = []
     unigram_conf_intervals = []
@@ -196,31 +199,24 @@ def ngram_model_worker(
             revision=f"step{step}",
             torch_dtype="auto",
             cache_dir=tmp_cache_dir,
+
         ).cuda()
-        model = BetterTransformer.transform(model)
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
-        for _ in range(num_iters):
+        for i in range(num_iters):
             unigram_sample = ngram_model.generate_unigrams()
-            unigram_outputs = model(unigram_sample)
-            unigram_loss_mean = F.cross_entropy(
-                unigram_outputs.logits[:, :-1].flatten(0, 1),
-                unigram_sample[:, 1:].flatten(),
-                reduction="mean",
-            ).item()
+            unigram_loss_mean = model(unigram_sample, labels=unigram_sample).loss
+
             running_step_unigram_loss_mean += unigram_loss_mean / num_iters
-            bigram_sample = ngram_model.generate_bigrams()
-            bigram_outputs = model(bigram_sample)
-            bigram_loss_mean = F.cross_entropy(
-                bigram_outputs.logits[:, :-1].flatten(0, 1),
-                bigram_sample[:, 1:].flatten(),
-                reduction="mean",
-            ).item()
-            del bigram_outputs, bigram_sample, unigram_outputs, unigram_sample
+            bigram_sample = ngram_model.generate_bigrams(i)
+            bigram_loss_mean = model(bigram_sample, labels=bigram_sample).loss
+            print(bigram_loss_mean)
+            del bigram_sample, unigram_sample
             running_step_bigram_loss_mean += bigram_loss_mean / num_iters
+
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
-            logits = model(sample).logits
+            logits = model(sample).logits[:, :, :d_vocab]
             divergences, _ = get_mean_divergences(
                 sample, logits, ngram_model, batch, d_vocab
             )
@@ -292,13 +288,18 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         # "pythia-70m-warmup01": 8
     }
     # model_batch_sizes = {f"pythia-14m-seed{i}": 8 for i in range(1, 10)}
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    d_vocab = len(tokenizer.vocab)  # 50277
+    # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    d_vocab = 50277 #len(tokenizer.vocab)  # 50277
     num_samples = 1024
 
     log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
     linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
     steps = log_steps + linear_step_samples + [143_000]
+
+    # TEMP
+    # TEMP
+    # TEMP
+    # steps = [143_000] 
 
     num_gpus = torch.cuda.device_count()
     mp.set_start_method("spawn")
@@ -328,13 +329,13 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         with mp.Pool(len(step_indices)) as pool:
             dfs = pool.starmap(ngram_model_worker, args)
 
-        df = pd.concat(dfs)
-        df.to_csv(
-            Path.cwd()
-            / "output"
-            / f"means_ngrams_model_{model_name}_{num_samples}.csv",
-            index=False,
-        )
+    df = pd.concat(dfs)
+    df.to_csv(
+        Path.cwd()
+        / "output"
+        / f"means_ngrams_model_{model_name}_{num_samples}.csv",
+        index=False,
+    )
 
 
 if __name__ == "__main__":

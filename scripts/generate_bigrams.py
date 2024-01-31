@@ -100,10 +100,5 @@ def main():
     # print(np.mean(perplexities)) # entropy = 5.594
 
 
-
-
-
-
-
 if __name__ == "__main__":
     main()

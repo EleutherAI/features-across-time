@@ -199,21 +199,20 @@ def ngram_model_worker(
             revision=f"step{step}",
             torch_dtype="auto",
             cache_dir=tmp_cache_dir,
-
         ).cuda()
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
             unigram_sample = ngram_model.generate_unigrams()
-            unigram_loss_mean = model(unigram_sample, labels=unigram_sample).loss
-
+            unigram_loss_mean = model(unigram_sample, labels=unigram_sample).loss.item()
             running_step_unigram_loss_mean += unigram_loss_mean / num_iters
+
             bigram_sample = ngram_model.generate_bigrams(i)
-            bigram_loss_mean = model(bigram_sample, labels=bigram_sample).loss
-            print(bigram_loss_mean)
-            del bigram_sample, unigram_sample
+            bigram_loss_mean = model(bigram_sample, labels=bigram_sample).loss.item()
             running_step_bigram_loss_mean += bigram_loss_mean / num_iters
+
+            del bigram_sample, unigram_sample
 
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
             logits = model(sample).logits[:, :, :d_vocab]
@@ -295,11 +294,6 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
     linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
     steps = log_steps + linear_step_samples + [143_000]
-
-    # TEMP
-    # TEMP
-    # TEMP
-    # steps = [143_000] 
 
     num_gpus = torch.cuda.device_count()
     mp.set_start_method("spawn")

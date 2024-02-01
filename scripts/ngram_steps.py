@@ -38,15 +38,15 @@ class NgramModel:
             torch.tensor(bigram_counts).sum(dim=1).cuda()
         )
         self.unigrams /= self.unigrams.sum()
-        self.unigrams = self.unigrams.log()
 
         # Conver to sparse CSR tensor in a dumb way
         sparse_bigram_probs = torch.tensor(bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)).log().to_sparse()
+
         indices = sparse_bigram_probs.indices().numpy()
         values = sparse_bigram_probs.values().numpy()
         shape = sparse_bigram_probs.shape
         sparse_csr_bigram_probs = scipy.sparse.coo_matrix((values, (indices[0], indices[1])), shape=shape).tocsr()
-        self.bigrams = torch.sparse_csr_tensor(
+        self.log_bigrams = torch.sparse_csr_tensor(
             sparse_csr_bigram_probs.indptr.astype(np.int64),
             sparse_csr_bigram_probs.indices.astype(np.int64),
             sparse_csr_bigram_probs.data.astype(np.float32),
@@ -68,16 +68,16 @@ class NgramModel:
         return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
     def get_bigram_dists(self, prev: torch.Tensor) -> torch.Tensor:
-        starts = self.bigrams.crow_indices()[prev]
-        ends = self.bigrams.crow_indices()[prev + 1]
+        starts = self.log_bigrams.crow_indices()[prev]
+        ends = self.log_bigrams.crow_indices()[prev + 1]
 
         # 0 padding to batch rows with variable numbers of non-zero elements
         bigram_dists = torch.zeros(
             (len(prev), self.d_vocab), dtype=torch.float32, device="cuda"
         )
         for i in range(len(prev)):
-            filled_col_indices = self.bigrams.col_indices()[starts[i] : ends[i]]
-            filled_col_values = self.bigrams.values()[starts[i] : ends[i]]
+            filled_col_indices = self.log_bigrams.col_indices()[starts[i] : ends[i]]
+            filled_col_values = self.log_bigrams.values()[starts[i] : ends[i]]
             bigram_dists[i][filled_col_indices] = filled_col_values
         return bigram_dists
 
@@ -147,7 +147,7 @@ def get_mean_divergences(
     # divergences.append(js_divergence(bigram_dists, logits).mean())
     del bigram_dists
 
-    unigram_dist = ngram_model.unigrams + torch.finfo(torch.float32).eps
+    unigram_dist = ngram_model.unigrams.log() + torch.finfo(torch.float32).eps
     divergences.append(kl_divergence(unigram_dist, logits).mean())
     # divergences.append(
     #     js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean()
@@ -184,7 +184,7 @@ def ngram_model_worker(
     d_vocab: int,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
-    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
+    # shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, batch)

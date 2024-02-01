@@ -11,6 +11,26 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import tempfile
+
+
+def add_kl_data(df, supplementary_path):
+    if os.path.exists(supplementary_path):
+        print("supplementary data detected, merging...")
+        supplementary_kl_div_df = pd.read_csv(supplementary_path)
+        for label in ["unigram_logit_kl_div", "bigram_logit_kl_div"]:
+            df[f'mean_{label}'] = supplementary_kl_div_df[f'mean_{label}']
+            df[f'bottom_conf_{label}'] = supplementary_kl_div_df[f'bottom_conf_{label}']
+            df[f'top_conf_{label}'] = supplementary_kl_div_df[f'top_conf_{label}']
+    return df
+
+
+def write_garbage():
+    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
+        fig = px.scatter(x=[0], y=[0])
+        fig.write_image(temp_file.name, format="pdf")
+    time.sleep(2)
 
 
 def base_2_log_ticks(values, step=1):
@@ -26,10 +46,7 @@ def hex_to_rgba(hex_color, opacity=0.5):
 
 def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qualitative=False):
     if not debug:
-        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-        fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-        fig.write_image(image_name, format="pdf")
-        time.sleep(2)
+        write_garbage()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388
@@ -73,13 +90,14 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
               line=dict(color="black", width=2, dash="dot"), row=1, col=idx + 1)
 
     for label, pretty_label, y_range, row, col in div_metadata:
+        df[f'top_conf_{label}_bpb'] = df[f'top_conf_{label}'] * bpb_coefficient
+        df[f'bottom_conf_{label}_bpb'] = df[f'bottom_conf_{label}'] * bpb_coefficient
+        df[f'mean_{label}_bpb'] = df[f'mean_{label}'] * bpb_coefficient
+
         for i, model in enumerate(df['pretty_model_name'].unique()):
             df_model = df[df['pretty_model_name'] == model]
             color = px.colors.qualitative.Plotly[i] if qualitative else px.colors.sequential.Plasma_r[i] 
             transparent_color = hex_to_rgba(color, opacity=0.17)
-            df_model[f'top_conf_{label}_bpb'] = df_model[f'top_conf_{label}'] * bpb_coefficient
-            df_model[f'bottom_conf_{label}_bpb'] = df_model[f'bottom_conf_{label}'] * bpb_coefficient
-            df_model[f'mean_{label}_bpb'] = df_model[f'mean_{label}'] * bpb_coefficient
             
             fig.add_trace(
                 go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{label}_bpb'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'),
@@ -110,7 +128,7 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
     # Add a shared, centered x-axis label
     fig.add_annotation(
         dict(
-            text="Training step", # (1 step = 2<sup>21</sup> tokens)",
+            text="Training step",
             xref="paper", yref="paper",
             x=0.5, y=-0.1,
             showarrow=False,
@@ -122,8 +140,7 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
 
 
 def plot_model_sizes(debug: bool):
-    bpb_num_samples = 1024
-    js_num_samples = 4096
+    num_samples = 1024
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     model_metadata = [
@@ -140,14 +157,10 @@ def plot_model_sizes(debug: bool):
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
         supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
-        if os.path.exists(supplementary_kl_div_path):
-            print("supplementary data detected, merging...")
-            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
-            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
-            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+        model_df = add_kl_data(model_df, supplementary_kl_div_path)
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name

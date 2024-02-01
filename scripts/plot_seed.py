@@ -13,16 +13,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from plot_ngram import base_2_log_ticks, hex_to_rgba
+from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage, add_kl_data
 import tempfile
-
-
-def write_garbage():
-    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
-        fig = px.scatter(x=[0], y=[0])
-        fig.write_image(temp_file.name, format="pdf")
-    time.sleep(2)
 
 
 def plot_seed_loss(df: pd.DataFrame, debug: bool):
@@ -63,7 +55,6 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
             margin=dict(l=20, r=20, t=35, b=0)
         )
             
-        # Title
         fig.add_annotation(
             dict(
                 text=title,
@@ -74,11 +65,10 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
             )
         )
 
-        # X axis title
         if show_xaxis:
             fig.add_annotation(
                 dict(
-                    text="Training step", # (1 step = 2<sup>21</sup> tokens)
+                    text="Training step",
                     xref="paper", yref="paper",
                     x=0.5, y=-0.2,
                     showarrow=False,
@@ -122,7 +112,7 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
 
 def main():
     debug = False
-    bpb_num_samples = 1024
+    num_samples = 1024
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     model_metadata = [
@@ -136,15 +126,11 @@ def main():
     for model_name, pretty_model_name, num_seeds in model_metadata:
         for i in range(1, num_seeds + 1):
             seed_df = pd.read_csv(
-                Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{bpb_num_samples}.csv"
+                Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{num_samples}.csv"
             )
-            supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{bpb_num_samples}_kl_div"
-            if os.path.exists(supplementary_kl_div_path):
-                print("supplementary data detected, merging...")
-                supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
-                seed_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
-                seed_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
 
+            supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{num_samples}_kl_div.csv"
+            seed_df = add_kl_data(seed_df, supplementary_kl_div_path)
             seed_df['seed'] = i
             seed_df['model_name'] = model_name
             seed_df['pretty_model_name'] = pretty_model_name

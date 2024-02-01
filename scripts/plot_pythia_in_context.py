@@ -6,39 +6,19 @@ import time
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plot_ngram import base_2_log_ticks, hex_to_rgba
+from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
 from plotly.subplots import make_subplots
 import plotly.express as px
 
-def plot_step_index_lines(df: pd.DataFrame, label: str, log=True):
-    fig = go.Figure()
-
-    # Assuming 'step' is the column to distinguish different lines
-    for step, group in df.groupby('step'):
-        fig.add_trace(go.Scatter(x=group['index'], y=group[f'mean_{label}_bpb'], mode='lines+markers',
-                                 name=f'Step {step}'))
-    fig.update_layout(
-        title=f'BPB over indices for models at different steps',
-        xaxis_title='Index',
-        yaxis_title=label  # Using z_label directly here for the y-axis title
-    )
-    fig.update_xaxes(type="log" if log else "linear")
-
-    return fig
-
 
 def main(debug: bool):
-    image_name = Path.cwd() / 'images' / f'in-context.pdf'
     if not debug:
-        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-        fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-        fig.write_image(image_name, format="pdf")
-        time.sleep(2)
-
-    num_samples = 1024
+        write_garbage()
 
     os.makedirs(Path.cwd() / "images", exist_ok=True)
+    image_name = Path.cwd() / 'images' / f'in-context.pdf'
 
+    num_samples = 1024
     bpb_coefficient = 0.3650388
     entropies = [2.89, 2.04]
     marker_series = [
@@ -54,7 +34,6 @@ def main(debug: bool):
 
     # Add missing step column
     n = 2048
-    # steps = ["000"] + [f"{2**i:03}" for i in range(int(math.log2(359)) + 1)] + ['359']
     steps = [16, 256, 1000, 143_000]
     group_numbers = df['index'].eq(0).cumsum() - 1
     df['step'] = group_numbers.apply(lambda x: steps[x] if x < len(steps) else steps[-1])
@@ -123,41 +102,7 @@ def main(debug: bool):
         )
     )
     fig.write_image(image_name, format="pdf")    
-
-    # # Plot
-    # labels = ["unigram", "bigram"] # "random", 
-    # filtered_df = df[df['index'] <= 10]
-
-    # for label in labels:
-    #     # Plot Anthropic's in-context learning metric
-    #     ratio_df = df.groupby('step').apply(lambda x: x[x['index'] == 49][f'mean_{label}_loss'].values[0] /
-    #                                         x[x['index'] == 499][f'mean_{label}_loss'].values[0] if len(x[x['index'] == 49]) > 0 and len(x[x['index'] == 499]) > 0 else np.nan)
-    #     fig = go.Figure(
-    #         [go.Scatter(x=ratio_df.index, y=ratio_df, mode='lines+markers')],
-    #         layout=dict(
-    #             title=f'Loss Ratio at 50th vs. 500th Token Index for {label}',
-    #             xaxis_title='Step',
-    #             yaxis_title='Loss Ratio (50th Index / 500th Index)'
-    #         )
-    #     )
-    #     fig.update_xaxes(type="log")
-
-    #     fig.write_image(Path.cwd() / 'images' / f'{label}_loss_ratio.png')
-
-    #     # Plot BPB over first few token indices
-    #     filtered_df[f'mean_{label}_bpb'] = filtered_df[f'mean_{label}_loss'] * bpb_coefficient
-    #     filtered_df[f'{label}_grad'] = filtered_df.groupby('step')[f'mean_{label}_bpb'].transform(lambda x: np.gradient(x, x.index))
-    #     fig = plot_step_index_lines(filtered_df, f'mean_{label}_bpb', log=False)
-    #     fig.write_image(Path.cwd() / 'images' / f'{label}_bpb_first_indices.png')    
-
-    #     # Plot BPB over token indices
-    #     df[f'mean_{label}_bpb'] = df[f'mean_{label}_loss'] * bpb_coefficient
-    #     df[f'{label}_grad'] = df.groupby('step')[f'mean_{label}_bpb'].transform(lambda x: np.gradient(x, x.index))
-    #     fig = plot_step_index_lines(df, label)
-    #     fig.write_image(Path.cwd() / 'images' / f'{label}_bpb_indices.png')    
-
-        
-
+    
 
 if __name__ == "__main__":
     main(debug=False)

@@ -10,6 +10,12 @@ from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
 from plotly.subplots import make_subplots
 import plotly.express as px
 
+def add_steps(df, supplementary_path):
+    if os.path.exists(supplementary_path):
+        print("supplementary data detected, merging...")
+        supplementary_df = pd.read_csv(supplementary_path)
+        df = pd.concat([df, supplementary_df])
+    return df
 
 def main(debug: bool):
     if not debug:
@@ -30,14 +36,20 @@ def main(debug: bool):
     df = pd.read_csv(
         Path.cwd() / "output" / f"pythia-12b_{num_samples}_steps.csv"
     )
+    supplementary_path = Path.cwd() / "output" / f"pythia-12b_{num_samples}_steps_additional.csv"
+    df = add_steps(df, supplementary_path)
     tick_values, tick_texts = base_2_log_ticks(df["index"])
 
     # Add missing step column
     n = 2048
-    steps = [16, 256, 1000, 143_000]
+    steps = [16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000]
     group_numbers = df['index'].eq(0).cumsum() - 1
     df['step'] = group_numbers.apply(lambda x: steps[x] if x < len(steps) else steps[-1])
     
+    # Remove a step or two because the confidence intervals overlap too much
+    df = df[df['step'] != 131_000]
+    df = df[df['step'] != 33_000]
+
     # Make index 1-indexed
     df['index'] = df['index'] + 1
 

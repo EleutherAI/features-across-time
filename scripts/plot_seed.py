@@ -5,6 +5,7 @@ import pickle
 from pathlib import Path
 import colorsys
 import time
+import os
 
 import numpy as np
 import pandas as pd
@@ -15,21 +16,27 @@ from plotly.subplots import make_subplots
 from plot_ngram import base_2_log_ticks, hex_to_rgba
 import tempfile
 
-def plot_seed_loss(df: pd.DataFrame, debug: bool):
-    if not debug:
-        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-        with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
-            fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-            fig.write_image(temp_file.name, format="pdf")
-        time.sleep(2)
 
-    tick_values, tick_texts = base_2_log_ticks(df["step"])
+def write_garbage():
+    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
+        fig = px.scatter(x=[0], y=[0])
+        fig.write_image(temp_file.name, format="pdf")
+    time.sleep(2)
+
+
+def plot_seed_loss(df: pd.DataFrame, debug: bool):
+    if not debug: write_garbage()
+
+    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388
+    marker_series = [
+        "circle", "square", "diamond", "cross", "x", 
+        "triangle-up", "triangle-down", "triangle-left", "triangle-right", 
+        "pentagon", "hexagon", "octagon", "star", "hexagram"
+    ]
 
     def create_row(df, title: str, name: str, ytitle, show_xaxis=False, show_legend=False):
-        save_name = name.replace("_mean", "").replace("_bpb", "")
-        image_name = Path.cwd() / "images" / f"seed_{save_name}.pdf"
-
         fig = make_subplots(
             rows=1, cols=4, shared_xaxes=True, shared_yaxes=True, 
             subplot_titles="", 
@@ -47,57 +54,70 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
             seed_mean = df_model.groupby('step')[name].mean()
             fig.add_trace(go.Scatter(x=df_model['step'], y=seed_mean, mode='lines+markers', name=model, line=dict(color=color), showlegend=show_legend, marker=dict(size=5)), row=1, col=model_index + 1)
 
-            fig.update_layout(
-                width=1000, 
-                height=300, 
-                legend=dict(x=0.98, y=0.98, xanchor='right', yanchor='top', font=dict(size=8), bgcolor='rgba(255, 255, 255, 0.85)'),
-                legend_title="Pythia model",
-                autosize=True,
-                margin=dict(l=20, r=20, t=30, b=30)
+        fig.update_layout(
+            width=1000, 
+            height=300, 
+            legend=dict(x=0.98, y=0.98, xanchor='right', yanchor='top', font=dict(size=8), bgcolor='rgba(255, 255, 255, 0.85)'),
+            legend_title="Pythia model",
+            autosize=True,
+            margin=dict(l=20, r=20, t=35, b=0)
+        )
+            
+        # Title
+        fig.add_annotation(
+            dict(
+                text=title,
+                xref="paper", yref="paper",
+                x=0.5, y=1.15,
+                showarrow=False,
+                font=dict(size=16)
             )
+        )
 
-            # Title
+        # X axis title
+        if show_xaxis:
             fig.add_annotation(
                 dict(
-                    text=title,
+                    text="Training step", # (1 step = 2<sup>21</sup> tokens)
                     xref="paper", yref="paper",
-                    x=0.5, y=1.15,
+                    x=0.5, y=-0.2,
                     showarrow=False,
                     font=dict(size=16)
                 )
             )
+            fig.update_layout(margin=dict(l=20, r=20, t=30, b=30))
 
-            # X axis title
-            if show_xaxis:
-                fig.add_annotation(
-                    dict(
-                        text="Training step", # (1 step = 2<sup>21</sup> tokens)
-                        xref="paper", yref="paper",
-                        x=0.5, y=-0.2,
-                        showarrow=False,
-                        font=dict(size=16)
-                    )
-                )
-            fig.update_xaxes(title_text="", type="log", tickvals=tick_values[::2], ticktext=tick_texts[::2])
+        fig.update_xaxes(title_text="", type="log", tickvals=tick_values, ticktext=tick_texts)
 
-            fig.update_yaxes(title_text=ytitle, title_font=dict(size=12), title_standoff=10, col=1)
-            fig.update_yaxes(range=[0.3, 0.8], row=3)
-            fig.write_image(image_name, format="pdf")
+        fig.update_yaxes(title_text=ytitle, title_font=dict(size=12), title_standoff=10, col=1)
+        fig.update_yaxes(range=[0.3, 0.8], row=3)
+        return fig
             
-
+    entropies = [2.89, 2.04]
     for idx, ngram in enumerate(["unigram", "bigram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
-        create_row(
-            df, f"{ngram.title()} sequence loss over training", f"mean_{ngram}_bpb", ytitle="Loss", show_legend=ngram=="unigram")
+        fig = create_row(
+            df, f"{ngram.title()} sequence loss across time", f"mean_{ngram}_bpb", ytitle="Loss", show_legend=ngram=="unigram")
+        
+        for col in [1, 2, 3, 4]:
+            fig.add_shape(type="line",
+                x0=1, y0=entropies[idx], x1=2**17, y1=entropies[idx],
+                line=dict(color="black", width=2, dash="dot"), row=1, col=col)
+
+        image_name = Path.cwd() / "images" / f"seed_{ngram}.pdf"
+        fig.write_image(image_name, format="pdf")
 
     div_metadata = [
-        ("unigram_logit_kl_div", "D<sub>KL</sub>(unigram model || Pythia) over training", [0, 7]),
-        ("bigram_logit_kl_div", "D<sub>KL</sub>(bigram model || Pythia) over training", [0, 7]),
+        ("unigram_logit_kl_div", "D<sub>KL</sub>(unigram model || Pythia) across time", [0, 7]),
+        ("bigram_logit_kl_div", "D<sub>KL</sub>(bigram model || Pythia) across time", [0, 7]),
     ]
     for label, pretty_label, y_range in div_metadata:
         df[f'mean_{label}_bpb'] = df[f'mean_{label}'] * bpb_coefficient
-        create_row(
+        fig = create_row(
             df, pretty_label, f'mean_{label}_bpb', ytitle="KL divergence", show_xaxis=label=="bigram_logit_kl_div")
+        
+        image_name = Path.cwd() / "images" / f"seed_{label}.pdf"
+        fig.write_image(image_name, format="pdf")
 
 
 def main():
@@ -118,9 +138,17 @@ def main():
             seed_df = pd.read_csv(
                 Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{bpb_num_samples}.csv"
             )
+            supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{bpb_num_samples}_kl_div"
+            if os.path.exists(supplementary_kl_div_path):
+                print("supplementary data detected, merging...")
+                supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+                seed_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+                seed_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
             seed_df['seed'] = i
             seed_df['model_name'] = model_name
             seed_df['pretty_model_name'] = pretty_model_name
+            seed_df['step'] = seed_df['step'] + 1 # 1-index steps
             seed_dfs.append(seed_df)
     df = pd.concat(seed_dfs)
     plot_seed_loss(df, debug)

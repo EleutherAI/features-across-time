@@ -5,23 +5,14 @@ import pickle
 from pathlib import Path
 import colorsys
 import time
+import os
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-
-def base_2_log_ticks(values, step=1):
-    max_val = np.ceil(np.log2(values.max()))
-    ticks = 2 ** np.arange(0, max_val + 1, step)
-    labels = [f'2<sup>{int(i)}</sup>' for i in np.arange(0, max_val + 1, step)]
-    return ticks, labels
-
-def hex_to_rgba(hex_color, opacity=0.5):
-    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
-    return f'rgba({r}, {g}, {b}, {opacity})'
+from plot_ngram import base_2_log_ticks, hex_to_rgba
 
 
 def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence_image_name: str, debug: bool, qualitative=False):
@@ -34,13 +25,18 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388
 
-    
-
     fig = make_subplots(
         rows=1, cols=2, shared_xaxes=True, shared_yaxes=True, 
         subplot_titles=["Unigram sequence loss across time", "Bigram sequence loss across time"],
         horizontal_spacing=0.02,
         vertical_spacing=0.05)
+
+    entropies = [2.89, 2.04]
+    marker_series = [
+        "circle", "square", "diamond", "cross", "x", 
+        "triangle-up", "triangle-down", "triangle-left", "triangle-right", 
+        "pentagon", "hexagon", "octagon", "star", "hexagram"
+    ]
 
     for idx, ngram in enumerate(["unigram", "bigram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
@@ -54,19 +50,26 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
 
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{ngram}_bpb'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{ngram}_bpb'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines+markers', marker=dict(size=5), name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines+markers', marker=dict(size=5, symbol=marker_series[i]), name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
+
+        entropy = entropies[idx]
+        fig.add_shape(type="line",
+              x0=1, y0=entropy, x1=2**17, y1=entropy,
+              line=dict(color="black", width=2, dash="dot"), row=1, col=idx + 1)
 
     fig.update_layout(
         width=1000, 
         height=400, 
         legend=dict(
-            x=1.02,
-            y=0.5,
-            xanchor='left', 
+            x=0.98,
+            y=0.65,
+            xanchor='right', 
             yanchor='middle',
             font=dict(size=8),
             title="Pythia loss",
+            bgcolor='rgba(255, 255, 255, 0.5)'
         ),
+        yaxis=dict(range=[1.5, 5.2]),
         margin=dict(l=20, r=20, t=50, b=60)
     )
 
@@ -166,6 +169,13 @@ def plot_model_sizes(debug: bool):
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name
@@ -182,7 +192,6 @@ def main():
     debug = False
 
     plot_model_sizes(debug)
-    # plot_warmups(debug)
 
 
 if __name__ == "__main__":

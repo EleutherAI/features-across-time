@@ -103,7 +103,7 @@ def multi_step_worker(
     hf_model_name = f"{team}/{model_name}"
     
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
-    # shutil.rmtree(tmp_cache_dir, ignore_errors=True)
+    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
     ngram_model = NgramModel(ngram_path, batch=batch, seq_len=seq_len)
@@ -253,11 +253,11 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         with mp.Pool(len(step_indices)) as pool:
             dfs = pool.starmap(multi_step_worker, args)
 
-    df = pd.concat(dfs)
-    df.to_csv(
-        Path.cwd() / "output" / f"{model_name}_{num_samples}_steps.csv",
-        index=False,
-    )
+            df = pd.concat(dfs)
+            df.to_csv(
+                Path.cwd() / "output" / f"{model_name}_{num_samples}_steps_additional.csv",
+                index=False,
+            )
 
 
 if __name__ == "__main__":

@@ -39,6 +39,15 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
         ("bigram_logit_kl_div", "D<sub>KL</sub>(bigram model || Pythia) across time", [0, 7], 2, 1),
     ]
 
+    marker_series = [
+        "circle", "square", "diamond", "cross", "x", 
+        "triangle-up", "triangle-down", "triangle-left", "triangle-right", 
+        "pentagon", "hexagon", "octagon", "star", "hexagram"
+    ]
+
+    log_spaced_indices = np.unique(np.logspace(0, np.log2(df['index'].max()), base=2, num=20).astype(int))
+    df = df[df['index'].isin(log_spaced_indices)]
+
     fig = make_subplots(
         rows=2, cols=2, shared_xaxes=True, shared_yaxes=True, 
         subplot_titles=["Unigram sequence loss across time", "Bigram sequence loss across time"] + [label[1] for label in div_metadata], 
@@ -57,7 +66,7 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
 
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_top_conf'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb_bottom_conf'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines', name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines+markers', marker=dict(size=5, symbol=marker_series[i]), name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
 
     for label, pretty_label, y_range, row, col in div_metadata:
         for i, model in enumerate(df['pretty_model_name'].unique()):
@@ -77,7 +86,7 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
                 row=row,
                 col=col)
             fig.add_trace(
-                go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}_bpb'], mode='lines+markers', marker=dict(size=5), name=model, line=dict(color=color), showlegend=False), # row==1 and col==2
+                go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}_bpb'], mode='lines+markers', marker=dict(size=5, symbol=marker_series[i]), name=model, line=dict(color=color), showlegend=False), # row==1 and col==2
                 row=row,
                 col=col)
 

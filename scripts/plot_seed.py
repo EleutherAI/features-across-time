@@ -44,7 +44,7 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
                 fig.add_trace(go.Scatter(x=seed_df['step'], y=seed_df[name], mode='lines', name=model, line=dict(color=transparent_color), showlegend=False), row=1, col=model_index + 1)
 
             seed_mean = df_model.groupby('step')[name].mean()
-            fig.add_trace(go.Scatter(x=df_model['step'], y=seed_mean, mode='lines+markers', name=model, line=dict(color=color), showlegend=show_legend, marker=dict(size=5)), row=1, col=model_index + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=seed_mean, mode='lines+markers', name=model, line=dict(color=color), showlegend=show_legend, marker=dict(size=5, symbol=marker_series[model_index])), row=1, col=model_index + 1)
 
         fig.update_layout(
             width=1000, 

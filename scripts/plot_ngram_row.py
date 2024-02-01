@@ -11,17 +11,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-
-def base_2_log_ticks(values, step=1):
-    max_val = np.ceil(np.log2(values.max()))
-    ticks = 2 ** np.arange(0, max_val + 1, step)
-    labels = [f'2<sup>{int(i)}</sup>' for i in np.arange(0, max_val + 1, step)]
-    return ticks, labels
-
-def hex_to_rgba(hex_color, opacity=0.5):
-    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
-    return f'rgba({r}, {g}, {b}, {opacity})'
+from plot_ngram import base_2_log_ticks, hex_to_rgba
 
 
 def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence_image_name: str, debug: bool, qualitative=False):
@@ -33,8 +23,6 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388
-
-    
 
     fig = make_subplots(
         rows=1, cols=2, shared_xaxes=True, shared_yaxes=True, 

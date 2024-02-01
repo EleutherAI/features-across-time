@@ -112,21 +112,22 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
                 row=row,
                 col=col)
             fig.add_trace(
-                go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}_bpb'], mode='lines+markers', marker=dict(size=5), name=model, line=dict(color=color), showlegend=col==2),
+                go.Scatter(x=df_model['step'], y=df_model[f'mean_{label}_bpb'], mode='lines+markers', marker=dict(size=5), name=model, line=dict(color=color), showlegend=False), # col==2
                 row=row,
                 col=col)
 
     fig.update_layout(
         width=1000, 
         height=400, 
-        legend=dict(
-            title="Pythia loss",
-            x=1.02,
-            y=0.5,
-            xanchor='left', 
-            yanchor='middle',
-            font=dict(size=8)
-        ),
+        # legend=dict(
+        #     x=0.98,
+        #     y=0.6,
+        #     xanchor='right', 
+        #     yanchor='middle',
+        #     font=dict(size=8),
+        #     title="Pythia loss",
+        #     bgcolor='rgba(255, 255, 255, 0.5)'
+        # ),
         margin=dict(l=20, r=20, t=50, b=60)
     )
 

@@ -104,8 +104,8 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
     fig.update_xaxes(title_text="", type="log", tickvals=tick_values, ticktext=tick_texts)
     
     fig.update_yaxes(title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1)
-    fig.update_yaxes(range=[1.8, 5], row=1, col=1)
-    fig.update_yaxes(range=[0, 4.5], row=2, col=1)
+    fig.update_yaxes(range=[1.8, 4.5], row=1, col=1)
+    fig.update_yaxes(range=[1, 4.5], row=2, col=1)
     fig.update_yaxes(title_text="KL divergence", title_font=dict(size=12), title_standoff=10, row=2, col=1)
     # Add a shared, centered x-axis label
     fig.add_annotation(
@@ -200,7 +200,7 @@ def plot_warmups(debug: bool):
 def main():
     debug = False
 
-    plot_model_sizes(debug)
+    # plot_model_sizes(debug)
     plot_warmups(debug)
 
 

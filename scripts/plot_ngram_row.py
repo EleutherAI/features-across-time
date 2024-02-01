@@ -5,6 +5,7 @@ import pickle
 from pathlib import Path
 import colorsys
 import time
+import os
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,13 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
         horizontal_spacing=0.02,
         vertical_spacing=0.05)
 
+    entropies = [2.89, 2.04]
+    marker_series = [
+        "circle", "square", "diamond", "cross", "x", 
+        "triangle-up", "triangle-down", "triangle-left", "triangle-right", 
+        "pentagon", "hexagon", "octagon", "star", "hexagram"
+    ]
+
     for idx, ngram in enumerate(["unigram", "bigram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"bottom_conf_{ngram}_bpb"] = df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -42,19 +50,26 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
 
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'top_conf_{ngram}_bpb'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
             fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'bottom_conf_{ngram}_bpb'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
-            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines+markers', marker=dict(size=5), name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
+            fig.add_trace(go.Scatter(x=df_model['step'], y=df_model[f'mean_{ngram}_bpb'], mode='lines+markers', marker=dict(size=5, symbol=marker_series[i]), name=model, line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
+
+        entropy = entropies[idx]
+        fig.add_shape(type="line",
+              x0=1, y0=entropy, x1=2**17, y1=entropy,
+              line=dict(color="black", width=2, dash="dot"), row=1, col=idx + 1)
 
     fig.update_layout(
         width=1000, 
         height=400, 
         legend=dict(
-            x=1.02,
-            y=0.5,
-            xanchor='left', 
+            x=0.98,
+            y=0.65,
+            xanchor='right', 
             yanchor='middle',
             font=dict(size=8),
             title="Pythia loss",
+            bgcolor='rgba(255, 255, 255, 0.5)'
         ),
+        yaxis=dict(range=[1.5, 5.2]),
         margin=dict(l=20, r=20, t=50, b=60)
     )
 
@@ -154,6 +169,7 @@ def plot_model_sizes(debug: bool):
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
+        # if os.path.exists()
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name
@@ -170,7 +186,6 @@ def main():
     debug = False
 
     plot_model_sizes(debug)
-    # plot_warmups(debug)
 
 
 if __name__ == "__main__":

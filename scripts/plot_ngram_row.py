@@ -169,7 +169,13 @@ def plot_model_sizes(debug: bool):
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
-        # if os.path.exists()
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name

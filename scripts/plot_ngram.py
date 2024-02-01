@@ -142,9 +142,16 @@ def plot_model_sizes(debug: bool):
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name
+
 
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
@@ -153,55 +160,11 @@ def plot_model_sizes(debug: bool):
     plot_bpb_and_divergences(df, image_name, debug)
 
 
-def plot_warmups(debug: bool):
-    num_samples = 1024
-
-    model_metadata = [
-        ("pythia-14m", "14M (fast warmup)"),
-        ("pythia-14m-warmup01", "14M (slow warmup)"),
-    ]
-    model_dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
-
-        model_df['step'] = model_df['step'] + 1
-        model_df['model_name'] = model_name
-        model_df['pretty_model_name'] = pretty_model_name
-
-        model_dfs.append(model_df)
-    df = pd.concat(model_dfs)
-
-    image_name = Path.cwd() / "images" / "warmups-14m.pdf"
-    plot_bpb_and_divergences(df, image_name, debug, qualitative=True)
-
-    model_metadata = [
-        ("pythia-70m", "70M (fast warmup)"),
-        ("pythia-70m-warmup01", "70M (slow warmup)"),
-    ]
-    model_dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
-
-        model_df['step'] = model_df['step'] + 1
-        model_df['model_name'] = model_name
-        model_df['pretty_model_name'] = pretty_model_name
-
-        model_dfs.append(model_df)
-    df = pd.concat(model_dfs)
-
-    image_name = Path.cwd() / "images" / "warmups-70m.pdf"
-    plot_bpb_and_divergences(df, image_name, debug, qualitative=True)
-
-
 def main():
     debug = False
 
     plot_model_sizes(debug)
-    plot_warmups(debug)
+    # plot_warmups(debug)
 
 
 if __name__ == "__main__":

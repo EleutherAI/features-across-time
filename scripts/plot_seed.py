@@ -5,6 +5,7 @@ import pickle
 from pathlib import Path
 import colorsys
 import time
+import os
 
 import numpy as np
 import pandas as pd
@@ -137,6 +138,13 @@ def main():
             seed_df = pd.read_csv(
                 Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{bpb_num_samples}.csv"
             )
+            supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}-seed{i}_{bpb_num_samples}_kl_div"
+            if os.path.exists(supplementary_kl_div_path):
+                print("supplementary data detected, merging...")
+                supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+                seed_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+                seed_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
             seed_df['seed'] = i
             seed_df['model_name'] = model_name
             seed_df['pretty_model_name'] = pretty_model_name

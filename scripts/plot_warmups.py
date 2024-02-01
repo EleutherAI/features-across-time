@@ -121,38 +121,6 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
     fig.write_image(image_name, format="pdf")
 
 
-def plot_model_sizes(debug: bool):
-    bpb_num_samples = 1024
-    js_num_samples = 4096
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
-
-    model_metadata = [
-        ("pythia-14m", "14M"),
-        ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        ("pythia-1.4b", "1.4B"),
-        ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
-    ]
-    model_dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
-        )
-        model_df['step'] = model_df['step'] + 1
-        model_df['model_name'] = model_name
-        model_df['pretty_model_name'] = pretty_model_name
-
-        model_dfs.append(model_df)
-    df = pd.concat(model_dfs)
-    
-    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
-    plot_bpb_and_divergences(df, image_name, debug)
-
-
 def plot_warmups(debug: bool):
     num_samples = 1024
 
@@ -165,6 +133,13 @@ def plot_warmups(debug: bool):
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
 
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
@@ -185,6 +160,13 @@ def plot_warmups(debug: bool):
         model_df = pd.read_csv(
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
 
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name

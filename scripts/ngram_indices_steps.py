@@ -217,7 +217,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     batch = 1
     seq_len = 2049
 
-    steps = [16, 256, 1000, 143_000]
+    steps = [16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000]
 
     # Amber steps go from 0 to 359. Assuming linearly spaced (not specified)
     # steps = ["000"] + [f"{2**i:03}" for i in range(int(math.log2(359)) + 1)] + ["358"]

@@ -16,7 +16,7 @@ from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, GPTNeoXForCausalLM
 from utils.divergences import js_divergence, kl_divergence, one_hot_js_divergence
-
+import scipy
 
 def batch_generator(dataset, batch_size):
     for i in range(0, len(dataset), batch_size):

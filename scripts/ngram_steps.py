@@ -32,16 +32,28 @@ class NgramModel:
 
         with open(path, "rb") as f:
             bigram_counts = pickle.load(f)
+        bigram_counts = bigram_counts.toarray().astype(np.float32)
+
         self.unigrams = (
-            torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
+            torch.tensor(bigram_counts).sum(dim=1).cuda()
         )
+        self.unigrams /= self.unigrams.sum()
+        self.unigrams = self.unigrams.log()
+
+        # Conver to sparse CSR tensor in a dumb way
+        sparse_bigram_probs = torch.tensor(bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)).log().to_sparse()
+        indices = sparse_bigram_probs.indices().numpy()
+        values = sparse_bigram_probs.values().numpy()
+        shape = sparse_bigram_probs.shape
+        sparse_csr_bigram_probs = scipy.sparse.coo_matrix((values, (indices[0], indices[1])), shape=shape).tocsr()
         self.bigrams = torch.sparse_csr_tensor(
-            bigram_counts.indptr.astype(np.int64),
-            bigram_counts.indices.astype(np.int64),
-            bigram_counts.data.astype(np.float32),
+            sparse_csr_bigram_probs.indptr.astype(np.int64),
+            sparse_csr_bigram_probs.indices.astype(np.int64),
+            sparse_csr_bigram_probs.data.astype(np.float32),
             dtype=torch.float32,
             device="cuda",
         )
+        
         self.bigram_samples = np.load('bigram-sequences.npy')
 
     def generate_unigrams(self) -> torch.Tensor:

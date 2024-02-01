@@ -47,7 +47,7 @@ def plot_shuffled_bpb():
     fig = px.line(df, x="step", y="mean_bow_bpb")
     fig.update_layout(
         {
-            "title": "Mean BPB on shuffled sequences over training steps",
+            "title": "Mean BPB on shuffled sequences across time",
             "yaxis_title": "Mean BPB",
             "xaxis_title": "Training step (1 step = 2,097,152 tokens)",
         }

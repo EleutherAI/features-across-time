@@ -93,7 +93,7 @@ def plot_loss_and_divergence(df: pd.DataFrame, image_name: str, debug: bool):
     
     fig.update_yaxes(title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1)
     fig.update_yaxes(range=[1.8, 4.5], row=1, col=1)
-    fig.update_yaxes(range=[1, 4.5], row=2, col=1)
+    fig.update_yaxes(range=[0, 4.5], row=2, col=1)
     fig.update_yaxes(title_text="KL divergence", title_font=dict(size=12), title_standoff=10, row=2, col=1)
     fig.add_annotation(
         dict(

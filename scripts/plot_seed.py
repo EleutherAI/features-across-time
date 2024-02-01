@@ -49,7 +49,7 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
         fig.update_layout(
             width=1000, 
             height=300, 
-            legend=dict(x=0.98, y=0.98, xanchor='right', yanchor='top', font=dict(size=8), bgcolor='rgba(255, 255, 255, 0.85)'),
+            legend=dict(x=0.98, y=0.94, xanchor='right', yanchor='top', font=dict(size=8), bgcolor='rgba(255, 255, 255, 0.85)'),
             legend_title="Pythia model",
             autosize=True,
             margin=dict(l=20, r=20, t=35, b=0)

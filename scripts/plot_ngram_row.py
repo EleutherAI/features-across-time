@@ -12,15 +12,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from plot_ngram import base_2_log_ticks, hex_to_rgba
+from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage, add_kl_data
 
 
 def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence_image_name: str, debug: bool, qualitative=False):
     if not debug:
-        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-        fig = px.scatter(x=[0, 1, 2, 3, 4], y=[0, 1, 4, 9, 16])
-        fig.write_image(loss_image_name, format="pdf")
-        time.sleep(2)
+        write_garbage()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388
@@ -77,7 +74,7 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
     fig.update_yaxes(title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1)
     fig.add_annotation(
         dict(
-            text="Training step", # (1 step = 2<sup>21</sup> tokens)",
+            text="Training step",
             xref="paper", yref="paper",
             x=0.5, y=-0.2,
             showarrow=False,
@@ -137,7 +134,7 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
     fig.update_yaxes(title_text="KL divergence", title_font=dict(size=12), title_standoff=10, row=1, col=1)
     fig.add_annotation(
         dict(
-            text="Training step", # (1 step = 2<sup>21</sup> tokens)",
+            text="Training step",
             xref="paper", yref="paper",
             x=0.5, y=-0.2,
             showarrow=False,
@@ -150,7 +147,7 @@ def plot_loss_and_divergences(df: pd.DataFrame, loss_image_name: str, divergence
 
 def plot_model_sizes(debug: bool):
     bpb_num_samples = 1024
-    js_num_samples = 4096
+    num_samples = 4096
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     model_metadata = [
@@ -170,11 +167,7 @@ def plot_model_sizes(debug: bool):
             Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
         )
         supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}_kl_div.csv"
-        if os.path.exists(supplementary_kl_div_path):
-            print("supplementary data detected, merging...")
-            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
-            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
-            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+        model_df = add_kl_data(model_df, supplementary_kl_div_path)
 
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
@@ -187,12 +180,120 @@ def plot_model_sizes(debug: bool):
     divergence_image_name = Path.cwd() / "images" / "ngram-divergence.pdf"
     plot_loss_and_divergences(df, loss_image_name, divergence_image_name, debug)
 
+def plot_warmups(debug: bool):
+    num_samples = 1024
+
+    model_metadata = [
+        ("pythia-14m", "14M (fast warmup)"),
+        ("pythia-14m-warmup01", "14M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+        )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['mean_unigram_logit_kl_div'] = supplementary_kl_div_df['mean_unigram_logit_kl_div']
+            model_df['mean_bigram_logit_kl_div'] = supplementary_kl_div_df['mean_bigram_logit_kl_div']
+
+
+        model_df['step'] = model_df['step'] + 1
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
+
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+
+    divergence_name = Path.cwd() / "images" / "warmups-14m-divergence.pdf"
+    loss_name = Path.cwd() / "images" / "warmups-14m-loss.pdf"
+    plot_loss_and_divergences(df, loss_name, divergence_name, debug, qualitative=True)
+
+    model_metadata = [
+        ("pythia-70m", "70M (fast warmup)"),
+        ("pythia-70m-warmup01", "70M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+        )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['mean_unigram_logit_kl_div'] = supplementary_kl_div_df['mean_unigram_logit_kl_div']
+            model_df['mean_bigram_logit_kl_div'] = supplementary_kl_div_df['mean_bigram_logit_kl_div']
+
+        model_df['step'] = model_df['step'] + 1
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
+
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+
+    loss_name = Path.cwd() / "images" / "warmups-70m-loss.pdf"
+    divergence_name = Path.cwd() / "images" / "warmups-70m-divergence.pdf"
+    plot_loss_and_divergences(df, loss_name, divergence_name, debug, qualitative=True)
+
+
+def plot_warmups(debug: bool):
+    num_samples = 1024
+
+    model_metadata = [
+        ("pythia-14m", "14M (fast warmup)"),
+        ("pythia-14m-warmup01", "14M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+        )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        model_df = add_kl_data(model_df, supplementary_kl_div_path)
+
+        model_df['step'] = model_df['step'] + 1
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
+
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+
+    divergence_name = Path.cwd() / "images" / "warmups-14m-divergence.pdf"
+    loss_name = Path.cwd() / "images" / "warmups-14m-loss.pdf"
+    plot_loss_and_divergences(df, loss_name, divergence_name, debug, qualitative=True)
+
+    model_metadata = [
+        ("pythia-70m", "70M (fast warmup)"),
+        ("pythia-70m-warmup01", "70M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+        )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        model_df = add_kl_data(model_df, supplementary_kl_div_path)
+
+        model_df['step'] = model_df['step'] + 1
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
+
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+
+    loss_name = Path.cwd() / "images" / "warmups-70m-loss.pdf"
+    divergence_name = Path.cwd() / "images" / "warmups-70m-divergence.pdf"
+    plot_loss_and_divergences(df, loss_name, divergence_name, debug, qualitative=True)
+
 
 def main():
     debug = False
 
     plot_model_sizes(debug)
-
+    plot_warmups(debug)
 
 if __name__ == "__main__":
     main()

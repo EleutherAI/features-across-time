@@ -12,15 +12,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from plot_ngram import base_2_log_ticks, hex_to_rgba
+from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
 
 
 def plot_loss(df: pd.DataFrame, image_name: str, debug: bool):
     if not debug:
-        # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-        fig = px.scatter(x=[0, 1], y=[0, 1])
-        fig.write_image(image_name, format="pdf")
-        time.sleep(2)
+        write_garbage()
 
     tick_values, tick_texts = base_2_log_ticks(np.array([int(i) for i in df["step"]]))
 

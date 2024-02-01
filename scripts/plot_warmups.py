@@ -104,8 +104,8 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
     fig.update_xaxes(title_text="", type="log", tickvals=tick_values, ticktext=tick_texts)
     
     fig.update_yaxes(title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1)
-    fig.update_yaxes(range=[1.8, 5], row=1, col=1)
-    fig.update_yaxes(range=[0, 4.5], row=2, col=1)
+    fig.update_yaxes(range=[1.8, 4.5], row=1, col=1)
+    fig.update_yaxes(range=[1, 4.5], row=2, col=1)
     fig.update_yaxes(title_text="KL divergence", title_font=dict(size=12), title_standoff=10, row=2, col=1)
     # Add a shared, centered x-axis label
     fig.add_annotation(
@@ -121,26 +121,17 @@ def plot_bpb_and_divergences(df: pd.DataFrame, image_name: str, debug: bool, qua
     fig.write_image(image_name, format="pdf")
 
 
-def plot_model_sizes(debug: bool):
-    bpb_num_samples = 1024
-    js_num_samples = 4096
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
+def plot_warmups(debug: bool):
+    num_samples = 1024
 
     model_metadata = [
-        ("pythia-14m", "14M"),
-        ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        ("pythia-1.4b", "1.4B"),
-        ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
+        ("pythia-14m", "14M (fast warmup)"),
+        ("pythia-14m-warmup01", "14M (slow warmup)"),
     ]
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{bpb_num_samples}.csv"
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
         supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
         if os.path.exists(supplementary_kl_div_path):
@@ -148,23 +139,51 @@ def plot_model_sizes(debug: bool):
             supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
             model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
             model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
+
         model_df['step'] = model_df['step'] + 1
         model_df['model_name'] = model_name
         model_df['pretty_model_name'] = pretty_model_name
 
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+
+    image_name = Path.cwd() / "images" / "warmups-14m.pdf"
+    plot_bpb_and_divergences(df, image_name, debug, qualitative=True)
+
+    model_metadata = [
+        ("pythia-70m", "70M (fast warmup)"),
+        ("pythia-70m-warmup01", "70M (slow warmup)"),
+    ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+        )
+        supplementary_kl_div_path = Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        if os.path.exists(supplementary_kl_div_path):
+            print("supplementary data detected, merging...")
+            supplementary_kl_div_df = pd.read_csv(supplementary_kl_div_path)
+            model_df['unigram_logit_kl_div'] = supplementary_kl_div_df['unigram_logit_kl_div']
+            model_df['bigram_logit_kl_div'] = supplementary_kl_div_df['bigram_logit_kl_div']
+
+
+        model_df['step'] = model_df['step'] + 1
+        model_df['model_name'] = model_name
+        model_df['pretty_model_name'] = pretty_model_name
 
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
-    
-    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
-    plot_bpb_and_divergences(df, image_name, debug)
+
+    image_name = Path.cwd() / "images" / "warmups-70m.pdf"
+    plot_bpb_and_divergences(df, image_name, debug, qualitative=True)
 
 
 def main():
     debug = False
 
-    plot_model_sizes(debug)
-    # plot_warmups(debug)
+    # plot_model_sizes(debug)
+    plot_warmups(debug)
 
 
 if __name__ == "__main__":

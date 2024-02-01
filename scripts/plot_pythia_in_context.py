@@ -40,6 +40,7 @@ def main(debug: bool):
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     bpb_coefficient = 0.3650388
+    entropies = [2.89, 2.04]
     marker_series = [
         "circle", "square", "diamond", "cross", "x", 
         "triangle-up", "triangle-down", "triangle-left", "triangle-right", 
@@ -89,17 +90,23 @@ def main(debug: bool):
             fig.add_trace(go.Scatter(x=group_df['index'], y=group_df[f'top_conf_{ngram}_bpb'], fill=None, mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
             fig.add_trace(go.Scatter(x=group_df['index'], y=group_df[f'bottom_conf_{ngram}_bpb'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=transparent_color, showlegend=False, hoverinfo='skip'), row=1, col=idx + 1)
             fig.add_trace(go.Scatter(x=group_df['index'], y=group_df[f'mean_{ngram}_bpb'], mode='lines+markers',  marker=dict(size=5, symbol=marker_series[i]), name=f'{step:,}', line=dict(color=color), showlegend=idx==1), row=1, col=idx + 1)
+        
+        fig.add_shape(type="line",
+              x0=1, y0=entropies[idx], x1=2**11, y1=entropies[idx],
+              line=dict(color="black", width=2, dash="dot"), row=1, col=idx + 1)
+
 
     fig.update_layout(
         width=1000, 
         height=400, 
         legend=dict(
-            x=1.02,
-            y=0.5,
-            xanchor='left', 
+            x=0.98,
+            y=0.6,
+            xanchor='right', 
             yanchor='middle',
             font=dict(size=8),
             title="Step",
+            bgcolor='rgba(255, 255, 255, 0.5)'
         ),
         margin=dict(l=20, r=20, t=50, b=60)
     )

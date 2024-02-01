@@ -14,6 +14,7 @@ from ngram_steps import NgramModel
 from scipy import stats
 from transformers import (
     AutoTokenizer,
+    AutoModelForCausalLM,
     LlamaForCausalLM,
     LlamaTokenizer,
     PreTrainedModel,
@@ -68,6 +69,7 @@ def get_sequence_losses(
     batch: int,
     seq_len: int,
     eod_token_index: int,
+    d_vocab=50277
 ) -> list[np.ndarray]:
     """Get sequence losses. Start a new sequence at each EOD token."""
     outputs = model(sample)
@@ -75,7 +77,7 @@ def get_sequence_losses(
         torch.where(sample[i] == eod_token_index)[0] for i in range(len(sample))
     ]
     loss = F.cross_entropy(
-        outputs.logits[:, :-1].reshape(batch * (seq_len - 1), -1),
+        outputs.logits[:, :-1, :d_vocab].reshape(batch * (seq_len - 1), -1),
         sample[:, 1:].reshape(batch * (seq_len - 1)),
         reduction="none",
     ).reshape(batch, seq_len - 1)
@@ -99,22 +101,23 @@ def multi_step_worker(
     tokenizer: PreTrainedTokenizer,
 ) -> pd.DataFrame:
     hf_model_name = f"{team}/{model_name}"
-
+    
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
-    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
+    # shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
     ngram_model = NgramModel(ngram_path, batch=batch, seq_len=seq_len)
-    use_encode = not (
-        isinstance(tokenizer, AutoTokenizer)
-        and NgramModel.tokenizer.name_or_path == tokenizer.name_or_path
-    )
+    # use_encode = not (
+    #     isinstance(tokenizer, AutoTokenizer)
+    #     and NgramModel.tokenizer.name_or_path == tokenizer.name_or_path
+    # )
+    use_encode = False
     if not use_encode:
         del tokenizer
 
     token_indices = []
     step_indices = []
-    labels = ["unigram_loss", "bigram_loss", "random_loss"]
+    labels = ["unigram_loss", "bigram_loss"] #  "random_loss"
     means = {label: [] for label in labels}
     bottom_conf_intervals = {label: [] for label in labels}
     top_conf_intervals = {label: [] for label in labels}
@@ -122,18 +125,18 @@ def multi_step_worker(
     num_iters = math.ceil(num_samples / batch)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
-        model = LlamaForCausalLM.from_pretrained(
+        model = AutoModelForCausalLM.from_pretrained(
             hf_model_name,
-            revision=f"ckpt_{step}",
+            revision=f"step{step}",
             torch_dtype="auto",
             cache_dir=tmp_cache_dir,
         ).cuda()
 
         step_unigram_losses = []
         step_bigram_losses = []
-        step_random_losses = []
+        # step_random_losses = []
 
-        for _ in range(num_iters):
+        for i in range(num_iters):
             step_unigram_sample = (
                 encode(ngram_model.generate_unigram_strs(), tokenizer, seq_len)
                 if use_encode
@@ -147,21 +150,21 @@ def multi_step_worker(
             step_bigram_sample = (
                 encode(ngram_model.generate_bigram_strs(), tokenizer, seq_len)
                 if use_encode
-                else ngram_model.generate_bigrams()
+                else ngram_model.generate_bigrams(i)
             )
             step_bigram_losses.extend(
                 get_sequence_losses(
                     model, step_bigram_sample, batch, seq_len, eod_index
                 )
             )
-            step_random_sample = torch.randint(
-                0, d_vocab, [batch, seq_len], device="cuda"
-            )
-            step_random_losses.extend(
-                get_sequence_losses(
-                    model, step_random_sample, batch, seq_len, eod_index
-                )
-            )
+            # step_random_sample = torch.randint(
+            #     0, d_vocab, [batch, seq_len], device="cuda"
+            # )
+            # step_random_losses.extend(
+            #     get_sequence_losses(
+            #         model, step_random_sample, batch, seq_len, eod_index
+            #     )
+            # )
             pbar.update(1)
 
         token_indices.extend(list(range(seq_len - 1)))
@@ -180,12 +183,12 @@ def multi_step_worker(
         bottom_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[0])
         top_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[1])
 
-        mean_random_loss, random_conf_intervals = positional_summary_stats(
-            step_random_losses, (seq_len - 1)
-        )
-        means["random_loss"].extend(mean_random_loss)
-        bottom_conf_intervals["random_loss"].extend(random_conf_intervals[0])
-        top_conf_intervals["random_loss"].extend(random_conf_intervals[1])
+        # mean_random_loss, random_conf_intervals = positional_summary_stats(
+        #     step_random_losses, (seq_len - 1)
+        # )
+        # means["random_loss"].extend(mean_random_loss)
+        # bottom_conf_intervals["random_loss"].extend(random_conf_intervals[0])
+        # top_conf_intervals["random_loss"].extend(random_conf_intervals[1])
 
         shutil.rmtree(tmp_cache_dir, ignore_errors=True)
 
@@ -201,17 +204,23 @@ def multi_step_worker(
 
 
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
-    team = "LLM360"
-    model_batch_sizes = {"Amber": 1}
-    tokenizer = LlamaTokenizer.from_pretrained("LLM360/Amber")
+    team = "EleutherAI"
+    model_batch_sizes = {"pythia-12b": 1}
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    # team = "LLM360"
+    # model_batch_sizes = {"Amber": 1}
+    # tokenizer = LlamaTokenizer.from_pretrained("LLM360/Amber")
 
-    vocab_size = tokenizer.vocab_size
-    eod_index = tokenizer.eos_token_id
+    vocab_size = 50277 # len(tokenizer.vocab)
+    eod_index = 0 # tokenizer.eos_token_id
     num_samples = 1024
     batch = 1
-    seq_len = 2048
+    seq_len = 2049
+
+    steps = [16, 256, 1000, 143_000]
+
     # Amber steps go from 0 to 359. Assuming linearly spaced (not specified)
-    steps = ["000"] + [f"{2**i:03}" for i in range(int(math.log2(359)) + 1)] + ["358"]
+    # steps = ["000"] + [f"{2**i:03}" for i in range(int(math.log2(359)) + 1)] + ["358"]
     print(steps)
     num_gpus = torch.cuda.device_count()
 

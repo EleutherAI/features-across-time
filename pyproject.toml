@@ -9,6 +9,11 @@ dependencies = [
     "concept-erasure",
     "datasets",
     "torch",
+    "plotly",
+    "scipy",
+    "transformers",
+    "optimum",
+    "pre-commit"
 ]
 version = "0.0.1"
 

@@ -7,16 +7,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import scipy
 import torch
 import torch.multiprocessing as mp
-import torch.nn.functional as F
 import tqdm.auto as tqdm
 from datasets import load_from_disk
 from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, GPTNeoXForCausalLM
-from utils.divergences import js_divergence, kl_divergence, one_hot_js_divergence
-import scipy
+from utils.divergences import kl_divergence
+
 
 def batch_generator(dataset, batch_size):
     for i in range(0, len(dataset), batch_size):
@@ -34,18 +34,24 @@ class NgramModel:
             bigram_counts = pickle.load(f)
         bigram_counts = bigram_counts.toarray().astype(np.float32)
 
-        self.unigrams = (
-            torch.tensor(bigram_counts).sum(dim=1).cuda()
-        )
+        self.unigrams = torch.tensor(bigram_counts).sum(dim=1).cuda()
         self.unigrams /= self.unigrams.sum()
 
         # Conver to sparse CSR tensor in a dumb way
-        sparse_bigram_probs = torch.tensor(bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)).log().to_sparse()
+        sparse_bigram_probs = (
+            torch.tensor(
+                bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)
+            )
+            .log()
+            .to_sparse()
+        )
 
         indices = sparse_bigram_probs.indices().numpy()
         values = sparse_bigram_probs.values().numpy()
         shape = sparse_bigram_probs.shape
-        sparse_csr_bigram_probs = scipy.sparse.coo_matrix((values, (indices[0], indices[1])), shape=shape).tocsr()
+        sparse_csr_bigram_probs = scipy.sparse.coo_matrix(
+            (values, (indices[0], indices[1])), shape=shape
+        ).tocsr()
         self.log_bigrams = torch.sparse_csr_tensor(
             sparse_csr_bigram_probs.indptr.astype(np.int64),
             sparse_csr_bigram_probs.indices.astype(np.int64),
@@ -53,10 +59,9 @@ class NgramModel:
             dtype=torch.float32,
             device="cuda",
         )
-        
-        self.bigram_samples = np.load('bigram-sequences.npy')
+
+        self.bigram_samples = np.load("bigram-sequences.npy")
         print("loaded ngram data")
-        
 
     def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(
@@ -110,7 +115,9 @@ class NgramModel:
         """Auto-regressively generate bigram model sequence. Initialize each
         sequence by sampling from a unigram model."""
         # i should range from 0 to 1024/2
-        batch = self.bigram_samples[i * self.batch: (i * self.batch) + self.batch, :50277]
+        batch = self.bigram_samples[
+            i * self.batch : (i * self.batch) + self.batch, :50277
+        ]
         return torch.tensor(batch, device="cuda").long()
         # result = [
         #     torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)
@@ -298,17 +305,19 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         # "pythia-6.9b": 2,
         # "pythia-12b": 1,
         "pythia-14m-warmup01": 8,
-        "pythia-70m-warmup01": 8
+        "pythia-70m-warmup01": 8,
     }
     model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(7, 10)})
     model_batch_sizes.update({f"pythia-70m-seed{i}": 8 for i in range(1, 10)})
     model_batch_sizes.update({f"pythia-160m-seed{i}": 8 for i in range(1, 10)})
-    model_batch_sizes.update({f"pythia-410m-seed{i}": 8 for i in list(range(1, 5)) + [6]})
+    model_batch_sizes.update(
+        {f"pythia-410m-seed{i}": 8 for i in list(range(1, 5)) + [6]}
+    )
 
     # TODO # model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(1, 8)})
     print(model_batch_sizes)
     # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    d_vocab = 50277 #len(tokenizer.vocab)  # 50277
+    d_vocab = 50277  # len(tokenizer.vocab)  # 50277
     num_samples = 1024
 
     log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]

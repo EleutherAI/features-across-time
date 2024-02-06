@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
-import torch.nn.functional as F
 import tqdm.auto as tqdm
 from datasets import load_from_disk
 from optimum.bettertransformer import BetterTransformer
@@ -223,17 +222,11 @@ def ngram_model_worker(
     d_vocab: int,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path("/mnt/ssd-1/lucia/.cache") / str(gpu_id)
-    shutil.rmtree(
-        tmp_cache_dir, ignore_errors=True
-    )
-    
+    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
+
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
     ngram_model = NgramModel(model_path, d_vocab, batch)
-    unigram_means = []
-    bigram_means = []
-    unigram_conf_intervals = []
-    bigram_conf_intervals = []
 
     div_labels = [
         "logit_token_js_div",

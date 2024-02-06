@@ -2,11 +2,11 @@ import pickle
 
 import numpy as np
 import torch
-from transformers import AutoTokenizer
-from tqdm.auto import tqdm
 import torch.nn.functional as F
-import pickle
+from numpy.typing import NDArray
 from scipy.stats import entropy
+from tqdm.auto import tqdm
+from transformers import AutoTokenizer
 
 
 class NgramModel:
@@ -26,7 +26,6 @@ class NgramModel:
 
         self.prob_matrix = self.bigrams / self.bigrams.sum(axis=1)[:, None]
 
-
     def generate_bigrams(self) -> torch.Tensor:
         """Auto-regressively generate bigram model sequence. Initialize each
         sequence by sampling from a unigram model."""
@@ -37,33 +36,30 @@ class NgramModel:
         for _ in range(self.seq_len - 1):
             prev = result[-1]
             rows = self.bigrams[prev[:, 0].cpu().numpy()]
-            next = torch.multinomial(
-                torch.tensor(rows, device='cuda'), 1
-            )
+            next = torch.multinomial(torch.tensor(rows, device="cuda"), 1)
             result.append(next)
         return torch.cat(result, dim=1)
 
-
-    def perplexity(self, sample: np.array):
-        nll = -np.log(self.prob_matrix[sample[:, :-1].flatten(), sample[:, 1:].flatten()])
+    def perplexity(self, sample: NDArray):
+        nll = -np.log(
+            self.prob_matrix[sample[:, :-1].flatten(), sample[:, 1:].flatten()]
+        )
         return np.exp(nll.mean())
 
-
-    def cross_entropy(self, sample: np.array):
+    def cross_entropy(self, sample: NDArray):
         rows = np.log(self.prob_matrix[sample])
-        breakpoint()
-        bigram_loss_mean = F.cross_entropy(
+
+        F.cross_entropy(
             torch.tensor(rows[:-1]),
             torch.tensor(sample[1:]),
             reduction="mean",
         ).item()
-        print(bigram_loss_mean)
 
 
-def entropy(arr: np.array):
-    '''H(Y|X) = H(X, Y) - H(X)'''
+def conditional_entropy(arr: NDArray):
+    """H(Y|X) = H(X, Y) - H(X)"""
     H = entropy(arr.data) - entropy(arr.sum(1))
-    print("Entropy: ", H) # 5.59
+    print("Entropy: ", H)  # 5.59
     bpb_ratio = 0.3366084909549386
     print("Entropy (bpb):", H * bpb_ratio)
 
@@ -71,15 +67,16 @@ def entropy(arr: np.array):
 def main():
     bigrams_path = "pythia-deduped-bigrams.pkl"
     batch = 4
-    ngram_model = NgramModel(bigrams_path, batch) # /mnt/ssd-1/lucia/
-    
+    ngram_model = NgramModel(bigrams_path, batch)  # /mnt/ssd-1/lucia/
+
     def generate_samples():
         data = np.zeros((1024, 2049), dtype=np.int64)
         for i in tqdm(range(0, 1024, batch)):
             sample = ngram_model.generate_bigrams()
-            data[i:i + batch, :] = sample.cpu().numpy()
+            data[i : i + batch, :] = sample.cpu().numpy()
 
-        np.save('bigram-sequences.npy', data)
+        np.save("bigram-sequences.npy", data)
+
     generate_samples()
 
     # data = np.load('bigram-sequences.npy')
@@ -88,10 +85,9 @@ def main():
     # breakpoint()
     # ngram_model.cross_entropy(data[0])
 
-
     # with open(bigrams_path, "rb") as f:
     #     arr = pickle.load(f)
-    # entropy(arr)
+    # conditional_entropy(arr)
 
     # perplexities = []
     # for i in tqdm(range(0, 1024 // batch, batch)):

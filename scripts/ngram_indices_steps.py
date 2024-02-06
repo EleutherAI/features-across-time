@@ -13,10 +13,8 @@ import tqdm.auto as tqdm
 from ngram_steps import NgramModel
 from scipy import stats
 from transformers import (
-    AutoTokenizer,
     AutoModelForCausalLM,
-    LlamaForCausalLM,
-    LlamaTokenizer,
+    AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
 )
@@ -69,7 +67,7 @@ def get_sequence_losses(
     batch: int,
     seq_len: int,
     eod_token_index: int,
-    d_vocab=50277
+    d_vocab=50277,
 ) -> list[np.ndarray]:
     """Get sequence losses. Start a new sequence at each EOD token."""
     outputs = model(sample)
@@ -101,7 +99,7 @@ def multi_step_worker(
     tokenizer: PreTrainedTokenizer,
 ) -> pd.DataFrame:
     hf_model_name = f"{team}/{model_name}"
-    
+
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
@@ -117,7 +115,7 @@ def multi_step_worker(
 
     token_indices = []
     step_indices = []
-    labels = ["unigram_loss", "bigram_loss"] #  "random_loss"
+    labels = ["unigram_loss", "bigram_loss"]  #  "random_loss"
     means = {label: [] for label in labels}
     bottom_conf_intervals = {label: [] for label in labels}
     top_conf_intervals = {label: [] for label in labels}
@@ -211,8 +209,8 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     # model_batch_sizes = {"Amber": 1}
     # tokenizer = LlamaTokenizer.from_pretrained("LLM360/Amber")
 
-    vocab_size = 50277 # len(tokenizer.vocab)
-    eod_index = 0 # tokenizer.eos_token_id
+    vocab_size = 50277  # len(tokenizer.vocab)
+    eod_index = 0  # tokenizer.eos_token_id
     num_samples = 1024
     batch = 1
     seq_len = 2049
@@ -255,7 +253,9 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
 
             df = pd.concat(dfs)
             df.to_csv(
-                Path.cwd() / "output" / f"{model_name}_{num_samples}_steps_additional.csv",
+                Path.cwd()
+                / "output"
+                / f"{model_name}_{num_samples}_steps_additional.csv",
                 index=False,
             )
 

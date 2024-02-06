@@ -4,7 +4,7 @@ from multiprocessing import cpu_count
 from typing import TypeVar, Union
 
 from datasets import Dataset, DatasetDict
-from transformers import PreTrainedTokenizerBase, AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 T = TypeVar("T", bound=Union[Dataset, DatasetDict])
 
@@ -137,7 +137,7 @@ def get_columns_all_equal(dataset: Union[Dataset, DatasetDict]) -> list[str]:
 
 
 if __name__ == "__main__":
-    data = Dataset.from_json('val.jsonl')
+    data = Dataset.from_json("val.jsonl")
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     data, ratio = chunk_and_tokenize(data, tokenizer, max_length=2049)
-    data.save_to_disk('val_tokenized.hf')
+    data.save_to_disk("val_tokenized.hf")

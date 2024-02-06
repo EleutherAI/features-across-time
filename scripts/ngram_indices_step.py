@@ -1,14 +1,11 @@
-import math
-import pickle
-from pathlib import Path
 import argparse
 import os
-
+import pickle
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-import torch.multiprocessing as mp
 import torch.nn.functional as F
 import tqdm.auto as tqdm
 from scipy import stats
@@ -37,17 +34,19 @@ class NgramModel:
             device="cuda",
         )  # 0.7 GB
 
-
     def generate_unigrams(self) -> torch.Tensor:
         tokens = torch.multinomial(
             self.unigrams, self.batch * self.seq_len, replacement=True
         ).reshape(self.batch, self.seq_len)
         return self.transcode(tokens)
-    
 
     def generate_random(self) -> torch.Tensor:
-        return torch.randint(0, len(self.encode_tokenizer.vocab), [self.batch, self.seq_len], device='cuda')
-
+        return torch.randint(
+            0,
+            len(self.encode_tokenizer.vocab),
+            [self.batch, self.seq_len],
+            device="cuda",
+        )
 
     # separate slice sparse array function with test
     def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
@@ -74,7 +73,6 @@ class NgramModel:
         sampled_value_indices = torch.multinomial(token_probs, 1)
         return torch.gather(token_col_indices, 1, sampled_value_indices)
 
-
     def generate_bigrams(self) -> torch.Tensor:
         """Auto-regressively generate bigram model sequence. Initialize each
         sequence by sampling from a unigram model."""
@@ -88,14 +86,17 @@ class NgramModel:
         result = torch.cat(result, dim=-1)
         return self.transcode(result)
 
-
     def transcode(self, tokens: torch.Tensor):
         encoded_result = []
         for i in range(len(tokens)):
             token_strs = self.decode_tokenizer.decode(tokens[i].tolist())
-            encoded_tokens = torch.tensor(self.encode_tokenizer.encode(token_strs), device='cuda')
-            encoded_result.append(encoded_tokens[:self.seq_len])
-            assert len(encoded_result[-1]) >= self.seq_len, "Transcoded tokens too short; increase seq_length"
+            encoded_tokens = torch.tensor(
+                self.encode_tokenizer.encode(token_strs), device="cuda"
+            )
+            encoded_result.append(encoded_tokens[: self.seq_len])
+            assert (
+                len(encoded_result[-1]) >= self.seq_len
+            ), "Transcoded tokens too short; increase seq_length"
         return torch.stack(encoded_result)
 
 
@@ -152,10 +153,12 @@ def worker(
     batch: int,
     seq_len: int,
 ) -> pd.DataFrame:
-    hf_model_name = f'{team}/{model_name}',
+    hf_model_name = (f"{team}/{model_name}",)
     tmp_cache_dir = Path(".cache")
     os.makedirs(tmp_cache_dir, exist_ok=True)
-    ngram_model = NgramModel(model_path, encode_tokenizer=hf_model_name, batch=batch, seq_len=seq_len + 1)
+    ngram_model = NgramModel(
+        model_path, encode_tokenizer=hf_model_name, batch=batch, seq_len=seq_len + 1
+    )
     model = AutoModelForCausalLM.from_pretrained(
         hf_model_name,
         torch_dtype="auto",
@@ -179,9 +182,7 @@ def worker(
             get_sequence_losses(model, unigram_sample, batch, seq_len)
         )
         random_sample = ngram_model.generate_random()
-        random_losses.extend(
-            get_sequence_losses(model, random_sample, batch, seq_len)
-        )
+        random_losses.extend(get_sequence_losses(model, random_sample, batch, seq_len))
 
     mean_unigram_loss, unigram_conf_intervals = positional_summary_stats(
         unigram_losses, target_length=seq_len
@@ -223,19 +224,11 @@ def main(ngram_path: str):
 
     num_samples = 1024
     batch = 1
-    seq_len = 2048 # (2048 * 4)
+    seq_len = 2048  # (2048 * 4)
 
-    df = worker(
-            model_name,
-            team,
-            ngram_path,
-            num_samples,
-            batch,
-            seq_len)
+    df = worker(model_name, team, ngram_path, num_samples, batch, seq_len)
     df.to_csv(
-        Path.cwd()
-        / "output"
-        / f"{model_name}_{num_samples}.csv",
+        Path.cwd() / "output" / f"{model_name}_{num_samples}.csv",
         index=False,
     )
 
@@ -246,7 +239,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="pythia-deduped-bigrams.pkl", # /mnt/ssd-1/lucia/
+        default="pythia-deduped-bigrams.pkl",  # /mnt/ssd-1/lucia/
         help="Path to pickled sparse scipy array of bigram counts over the Pile",
     )
     args = parser.parse_args()

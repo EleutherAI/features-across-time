@@ -1,12 +1,12 @@
+import os
+import pickle
+import random
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
-import os
-import pickle
-import random
 import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
@@ -15,15 +15,15 @@ from concept_erasure.quantile import QuantileNormalizer
 from concept_erasure.utils import assert_type
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
 from einops import rearrange
-from torch import nn, optim, Tensor
+from torch import Tensor, nn, optim
 from torch.distributions import MultivariateNormal
 from transformers import (
-    get_cosine_schedule_with_warmup,
     Trainer,
     TrainerCallback,
     TrainerControl,
     TrainerState,
     TrainingArguments,
+    get_cosine_schedule_with_warmup,
 )
 from transformers.modeling_outputs import ModelOutput
 
@@ -144,9 +144,7 @@ class HfWrapper(nn.Module):
     def forward(self, pixel_values: Tensor, labels: Tensor | None = None):
         logits = self.model(pixel_values)
         loss = (
-            nn.functional.cross_entropy(logits, labels)
-            if labels is not None
-            else None
+            nn.functional.cross_entropy(logits, labels) if labels is not None else None
         )
         return ModelOutput(logits=logits, loss=loss)
 
@@ -282,17 +280,20 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
     val_sets = {
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
-        "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
-        "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "gaussian": gaussian,
-        "real": val,
-        "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
         "real": val,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
     for net in nets:
         run_model(
-            train, val_sets, test, dataset_str,  net, h, len(labels), seed,
+            train,
+            val_sets,
+            test,
+            dataset_str,
+            net,
+            h,
+            len(labels),
+            seed,
         )
 
 
@@ -324,7 +325,6 @@ def run_model(
         # Use Tensor Cores for fp32 matmuls
         tf32=True,
         warmup_steps=2000,
-
         # Used by ConvNeXt and Swin
         weight_decay=0.05,
     )
@@ -365,10 +365,10 @@ def run_model(
             model = ConvNextV2ForImageClassification(cfg)
         case ("regnet", _, arch):
             from torchvision.models import (
-                regnet_y_400mf,
-                regnet_y_800mf,
                 regnet_y_1_6gf,
                 regnet_y_3_2gf,
+                regnet_y_400mf,
+                regnet_y_800mf,
             )
 
             match arch:
@@ -383,11 +383,13 @@ def run_model(
                 case other:
                     raise ValueError(f"Unknown RegNet architecture {other}")
 
-            net.stem[0].stride = (1, 1) # type: ignore
+            net.stem[0].stride = (1, 1)  # type: ignore
             model = HfWrapper(net)
         case ("swin", _, arch):
             from torchvision.models.swin_transformer import (
-                PatchMergingV2, SwinTransformer, SwinTransformerBlockV2,
+                PatchMergingV2,
+                SwinTransformer,
+                SwinTransformerBlockV2,
             )
 
             match arch:
@@ -403,7 +405,7 @@ def run_model(
                 case "nano":
                     num_heads = [2, 4, 8, 16]
                     embed_dim = 80
-                case "tiny" | "":   # default
+                case "tiny" | "":  # default
                     num_heads = [3, 6, 12, 24]
                     embed_dim = 96
                 case other:

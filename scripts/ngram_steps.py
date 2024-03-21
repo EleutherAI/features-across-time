@@ -4,18 +4,23 @@ import os
 import pickle
 import shutil
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Callable
+
 
 import numpy as np
 import pandas as pd
 import scipy
 import torch
 import torch.multiprocessing as mp
+import torch.nn.functional as F
 import tqdm.auto as tqdm
+from mamba_ssm import MambaLMHeadModel
 from datasets import load_from_disk
 from scipy import stats
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, GPTNeoXForCausalLM
-from utils.divergences import kl_divergence
+from transformers import AutoTokenizer
+from utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
 
 
 def batch_generator(dataset, batch_size):
@@ -61,7 +66,6 @@ class NgramModel:
         )
 
         self.bigram_samples = np.load("bigram-sequences.npy")
-        print("loaded ngram data")
 
     def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(
@@ -141,31 +145,31 @@ def get_mean_divergences(
 ) -> np.ndarray:
     divergences = []
     logits = logits[:, :-1, :d_vocab].flatten(0, 1)
-    # sample = tokens[:, 1:].flatten()
+    sample = tokens[:, 1:].flatten()
     bigram_dists = (
         ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
         + torch.finfo(torch.float32).eps
     )
-    # divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
-    # divergences.append(one_hot_js_divergence(bigram_dists, sample, batch).mean())
-    # del sample
+    divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
+    divergences.append(one_hot_js_divergence(bigram_dists, sample, batch).mean())
+    del sample
 
     divergences.append(kl_divergence(bigram_dists, logits).mean())
-    # divergences.append(js_divergence(bigram_dists, logits).mean())
+    divergences.append(js_divergence(bigram_dists, logits).mean())
     del bigram_dists
 
     unigram_dist = ngram_model.unigrams.log() + torch.finfo(torch.float32).eps
     divergences.append(kl_divergence(unigram_dist, logits).mean())
-    # divergences.append(
-    #     js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean()
-    # )
+    divergences.append(
+        js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean()
+    )
     labels = [
-        # "logit_token_js_div",
-        # "bigram_token_js_div",
+        "logit_token_js_div",
+        "bigram_token_js_div",
         "bigram_logit_kl_div",
-        # "bigram_logit_js_div",
+        "bigram_logit_js_div",
         "unigram_logit_kl_div",
-        # "unigram_logit_js_div",
+        "unigram_logit_js_div",
     ]
     return torch.stack(divergences), labels
 
@@ -178,87 +182,104 @@ def get_confidence_intervals(
     return conf_intervals
 
 
+@dataclass
+class Experiment:
+    def __init__(self, team: str, model_name: str, batch_size: int, seq_len: int, get_model: Callable, get_tokenizer: Callable):
+        self.team = team
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.get_model = get_model
+        self.get_tokenizer = get_tokenizer
+        self.seq_len = seq_len
+
+
 @torch.inference_mode()
 def ngram_model_worker(
     gpu_id: int,
     steps: list[int],
-    model_name: str,
+    experiment: Experiment,
     model_path: str,
     pile_path: str,
     tmp_cache_path: str,
     num_samples: int,
-    batch: int,
     d_vocab: int,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
-    # shutil.rmtree(tmp_cache_dir, ignore_errors=True)
+    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
-    ngram_model = NgramModel(model_path, batch)
+    ngram_model = NgramModel(model_path, experiment.batch_size)
+    print("Loaded n-gram data...")
 
-    # unigram_means = []
-    # bigram_means = []
-    # unigram_conf_intervals = []
-    # bigram_conf_intervals = []
+    unigram_means = []
+    bigram_means = []
+    unigram_conf_intervals = []
+    bigram_conf_intervals = []
     div_labels = [
-        # "logit_token_js_div",
-        # "bigram_token_js_div",
+        "logit_token_js_div",
+        "bigram_token_js_div",
         "bigram_logit_kl_div",
-        # "bigram_logit_js_div",
+        "bigram_logit_js_div",
         "unigram_logit_kl_div",
-        # "unigram_logit_js_div",
+        "unigram_logit_js_div",
     ]
     div_means = {label: [] for label in div_labels}
     div_conf_intervals = {label: [] for label in div_labels}
 
-    num_iters = math.ceil(num_samples / batch)
+    num_iters = math.ceil(num_samples / experiment.batch_size)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
-        pile = iter(DataLoader(load_from_disk(pile_path), batch_size=batch))
-        model = GPTNeoXForCausalLM.from_pretrained(
-            f"EleutherAI/{model_name}",
-            revision=f"step{step}",
-            torch_dtype="auto",
-            cache_dir=tmp_cache_dir,
-        ).cuda()
-        # running_step_unigram_loss_mean = 0.0
-        # running_step_bigram_loss_mean = 0.0
+        pile = iter(DataLoader(load_from_disk(pile_path), batch_size=experiment.batch_size))
+        model = experiment.get_model(experiment.team, experiment.model_name, step)
+        running_step_unigram_loss_mean = 0.0
+        running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
-            # unigram_sample = ngram_model.generate_unigrams()
-            # unigram_loss_mean = model(unigram_sample, labels=unigram_sample).loss.item()
-            # running_step_unigram_loss_mean += unigram_loss_mean / num_iters
+            unigram_sample = ngram_model.generate_unigrams()
+            unigram_logits = model(unigram_sample).logits[:, :, :d_vocab]
 
-            # bigram_sample = ngram_model.generate_bigrams(i)
-            # bigram_loss_mean = model(bigram_sample, labels=bigram_sample).loss.item()
-            # running_step_bigram_loss_mean += bigram_loss_mean / num_iters
+            unigram_loss_mean = F.cross_entropy(
+                unigram_logits[:, :-1].reshape(experiment.batch_size * experiment.seq_len, -1),
+                unigram_sample[:, 1:].reshape(experiment.batch_size * experiment.seq_len),
+                reduction="mean",
+            ).item()
+            running_step_unigram_loss_mean += unigram_loss_mean / num_iters
 
-            # del bigram_sample, unigram_sample
+            bigram_sample = ngram_model.generate_bigrams(i)
+            bigram_logits = model(bigram_sample).logits[:, :, :d_vocab]
+            bigram_loss_mean = F.cross_entropy(
+                bigram_logits[:, :-1].reshape(experiment.batch_size * experiment.seq_len, -1),
+                bigram_sample[:, 1:].reshape(experiment.batch_size * experiment.seq_len),
+                reduction="mean",
+            ).item()
+            running_step_bigram_loss_mean += bigram_loss_mean / num_iters
+
+            del bigram_sample, unigram_sample
 
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
             logits = model(sample).logits[:, :, :d_vocab]
             divergences, _ = get_mean_divergences(
-                sample, logits, ngram_model, batch, d_vocab
+                sample, logits, ngram_model, experiment.batch_size, d_vocab
             )
             running_step_div_means += (divergences / num_iters).cpu()
             pbar.update(1)
 
-        # unigram_means.append(running_step_unigram_loss_mean)
-        # unigram_conf_intervals.append(
-        #     get_confidence_intervals(running_step_unigram_loss_mean, num_iters * batch)
-        # )
-        # bigram_means.append(running_step_bigram_loss_mean)
-        # bigram_conf_intervals.append(
-        #     get_confidence_intervals(running_step_bigram_loss_mean, num_iters * batch)
-        # )
+        unigram_means.append(running_step_unigram_loss_mean)
+        unigram_conf_intervals.append(
+            get_confidence_intervals(running_step_unigram_loss_mean, num_iters * experiment.batch_size)
+        )
+        bigram_means.append(running_step_bigram_loss_mean)
+        bigram_conf_intervals.append(
+            get_confidence_intervals(running_step_bigram_loss_mean, num_iters * experiment.batch_size)
+        )
         for i, label in enumerate(div_labels):
             div_means[label].append(running_step_div_means[i].item())
             div_conf_intervals[label].append(
-                get_confidence_intervals(div_means[label][-1], num_iters * batch)
+                get_confidence_intervals(div_means[label][-1], num_iters * experiment.batch_size)
             )
 
         shutil.rmtree(
-            tmp_cache_dir / f"models--EleutherAI--{model_name}", ignore_errors=True
+            tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}", ignore_errors=True
         )
 
     div_mean_data = {f"mean_{label}": div_means[label] for label in div_labels}
@@ -274,49 +295,82 @@ def ngram_model_worker(
     return pd.DataFrame(
         {
             "step": steps,
-            # "mean_unigram_loss": unigram_means,
-            # "mean_bigram_loss": bigram_means,
-            # "bottom_conf_unigram_loss": [
-            #     interval[0] for interval in unigram_conf_intervals
-            # ],
-            # "top_conf_unigram_loss": [
-            #     interval[1] for interval in unigram_conf_intervals
-            # ],
-            # "bottom_conf_bigram_loss": [
-            #     interval[0] for interval in bigram_conf_intervals
-            # ],
-            # "top_conf_bigram_loss": [interval[1] for interval in bigram_conf_intervals],
+            "mean_unigram_loss": unigram_means,
+            "mean_bigram_loss": bigram_means,
+            "bottom_conf_unigram_loss": [
+                interval[0] for interval in unigram_conf_intervals
+            ],
+            "top_conf_unigram_loss": [
+                interval[1] for interval in unigram_conf_intervals
+            ],
+            "bottom_conf_bigram_loss": [
+                interval[0] for interval in bigram_conf_intervals
+            ],
+            "top_conf_bigram_loss": [interval[1] for interval in bigram_conf_intervals],
             **div_mean_data,
             **div_bottom_conf_data,
             **div_top_conf_data,
         }
     )
+        
+
+def get_neo_tokenizer():
+    return AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+
+
+def get_zyphra_mamba(team: str, model_name: str, step: int):
+    return MambaLMHeadModel.from_pretrained(
+        f"{team}/{model_name}",
+        iteration=step,
+        device="cuda"
+    )
+
+
+# def get_eleuther_mamba(team: str, model_name: str, step: int, tmp_cache_dir: str):
+#     # AutoModel, MambaLMHeadModel, MambaForCausalLM
+#     return MambaLMHeadModel.from_pretrained(
+#         f"{team}/{model_name}", 
+#         revision=f"step{step}",
+#         # torch_dtype="auto",
+#         # cache_dir=tmp_cache_dir,
+#         device="cuda"
+#     )
 
 
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
-    model_batch_sizes = {
-        # "pythia-14m": 8,
-        # "pythia-70m": 8,
-        # "pythia-160m": 4,
-        # "pythia-410m": 4,
-        # "pythia-1b": 4,
-        # "pythia-1.4b": 8,
-        # "pythia-2.8b": 4,
-        # "pythia-6.9b": 2,
-        # "pythia-12b": 1,
-        "pythia-14m-warmup01": 8,
-        "pythia-70m-warmup01": 8,
-    }
-    model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(7, 10)})
-    model_batch_sizes.update({f"pythia-70m-seed{i}": 8 for i in range(1, 10)})
-    model_batch_sizes.update({f"pythia-160m-seed{i}": 8 for i in range(1, 10)})
-    model_batch_sizes.update(
-        {f"pythia-410m-seed{i}": 8 for i in list(range(1, 5)) + [6]}
-    )
+    experiments = [Experiment(
+        "hails", 
+        "mamba-160m", 
+        4, 
+        2048, 
+        get_zyphra_mamba, 
+        get_neo_tokenizer
+    )]
+
+    # model_batch_sizes = {
+    #     # "pythia-14m": 8,
+    #     # "pythia-70m": 8,
+    #     # "pythia-160m": 4,
+    #     # "pythia-410m": 4,
+    #     # "pythia-1b": 4,
+    #     # "pythia-1.4b": 8,
+    #     # "pythia-2.8b": 4,
+    #     # "pythia-6.9b": 2,
+    #     # "pythia-12b": 1,
+    #     # "pythia-14m-warmup01": 8,
+    #     # "pythia-70m-warmup01": 8,
+    #     "mamba-160m": 4,
+    # }
+    # model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(7, 10)})
+    # model_batch_sizes.update({f"pythia-70m-seed{i}": 8 for i in range(1, 10)})
+    # model_batch_sizes.update({f"pythia-160m-seed{i}": 8 for i in range(1, 10)})
+    # model_batch_sizes.update(
+        # {f"pythia-410m-seed{i}": 8 for i in list(range(1, 5)) + [6]}
+    # )
 
     # TODO # model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(1, 8)})
-    print(model_batch_sizes)
-    # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    # print(model_batch_sizes)
+    
     d_vocab = 50277  # len(tokenizer.vocab)  # 50277
     num_samples = 1024
 
@@ -324,7 +378,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
     steps = log_steps + linear_step_samples + [143_000]
 
-    num_gpus = torch.cuda.device_count()
+    num_gpus = 1 # torch.cuda.device_count()
     mp.set_start_method("spawn")
 
     max_steps_per_chunk = math.ceil(len(steps) / num_gpus)
@@ -333,17 +387,16 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         for i in range(0, len(steps), max_steps_per_chunk)
     ]
 
-    for model_name, batch in model_batch_sizes.items():
+    for experiment in experiments:
         args = [
             (
                 i,
                 step_indices[i],
-                model_name,
+                experiment,
                 ngram_path,
                 pile_path,
                 tmp_cache_path,
                 num_samples,
-                batch,
                 d_vocab,
             )
             for i in range(len(step_indices))
@@ -356,7 +409,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
             df.to_csv(
                 Path.cwd()
                 / "output"
-                / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv",
+                / f"means_ngrams_model_{experiment.model_name}_{num_samples}_kl_div.csv",
                 index=False,
             )
 

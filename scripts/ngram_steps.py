@@ -192,7 +192,7 @@ class Experiment:
         self.get_tokenizer = get_tokenizer
         self.seq_len = seq_len
 
-
+    
 @torch.inference_mode()
 def ngram_model_worker(
     gpu_id: int,
@@ -340,12 +340,12 @@ def get_zyphra_mamba(team: str, model_name: str, step: int):
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     get_zyphra_mamba("Zyphra", "Mamba-370M", 0)
     experiments = [Experiment(
-        "Zyphra", 
-        "Mamba-370M", 
-        4, 
-        2048, 
-        get_zyphra_mamba, 
-        get_neo_tokenizer
+        team="Zyphra", 
+        model_name="Mamba-370M", 
+        batch_size=2, 
+        seq_len=2048, 
+        get_model=get_zyphra_mamba, 
+        get_tokenizer=get_neo_tokenizer
     )]
     
     d_vocab = 50277  # len(tokenizer.vocab) 
@@ -355,7 +355,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
     steps = log_steps + linear_step_samples + [143_000]
 
-    num_gpus = 1 # torch.cuda.device_count()
+    num_gpus = torch.cuda.device_count()
     mp.set_start_method("spawn")
 
     max_steps_per_chunk = math.ceil(len(steps) / num_gpus)
@@ -382,13 +382,13 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         with mp.Pool(len(step_indices)) as pool:
             dfs = pool.starmap(ngram_model_worker, args)
 
-            df = pd.concat(dfs)
-            df.to_csv(
-                Path.cwd()
-                / "output"
-                / f"means_ngrams_model_{experiment.model_name}_{num_samples}_kl_div.csv",
-                index=False,
-            )
+        df = pd.concat(dfs)
+        df.to_csv(
+            Path.cwd()
+            / "output"
+            / f"means_ngrams_model_{experiment.model_name}_{num_samples}_kl_div.csv",
+            index=False,
+        )
 
 
 if __name__ == "__main__":

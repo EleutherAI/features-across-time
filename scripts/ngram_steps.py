@@ -178,8 +178,7 @@ def get_confidence_intervals(
     mean: float, num_items: int, confidence=0.95
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     sem = np.sqrt(mean / num_items)
-    conf_intervals = stats.norm.interval(confidence, loc=mean, scale=sem)
-    return conf_intervals
+    return stats.norm.interval(confidence, loc=mean, scale=sem)
 
 
 @dataclass
@@ -291,7 +290,6 @@ def ngram_model_worker(
         f"top_conf_{label}": [interval[1] for interval in div_conf_intervals[label]]
         for label in div_labels
     }
-
     return pd.DataFrame(
         {
             "step": steps,
@@ -338,7 +336,6 @@ def get_zyphra_mamba(team: str, model_name: str, step: int):
 
 
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
-    get_zyphra_mamba("Zyphra", "Mamba-370M", 0)
     experiments = [Experiment(
         team="Zyphra", 
         model_name="Mamba-370M", 
@@ -351,10 +348,15 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     d_vocab = 50277  # len(tokenizer.vocab) 
     num_samples = 1024
 
-    log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
-    linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 33_000, 66_000, 131_000]
-    steps = log_steps + linear_step_samples + [143_000]
+    # log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
+    # linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 32_000, 61_000]
+    # final_steps = [143_000]
+    # steps = log_steps + linear_step_samples + final_steps
 
+    zyphra_log_steps = [1] + [2**i for i in range(int(math.log2(2048)) + 1)]
+    zyphra_linear_step_samples = [10_000, 20_000, 40_000, 80_000, 160_000, 320_000]
+    zyphra_final_steps = [610_000]
+    steps = zyphra_log_steps + zyphra_linear_step_samples + zyphra_final_steps
     num_gpus = torch.cuda.device_count()
     mp.set_start_method("spawn")
 
@@ -386,7 +388,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         df.to_csv(
             Path.cwd()
             / "output"
-            / f"means_ngrams_model_{experiment.model_name}_{num_samples}_kl_div.csv",
+            / f"means_ngrams_model_{experiment.model_name}_{num_samples}.csv",
             index=False,
         )
 

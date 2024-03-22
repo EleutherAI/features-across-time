@@ -338,40 +338,17 @@ def get_zyphra_mamba(team: str, model_name: str, step: int):
 
 
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
+    get_zyphra_mamba("Zyphra", "Mamba-370M", 0)
     experiments = [Experiment(
-        "hails", 
-        "mamba-160m", 
+        "Zyphra", 
+        "Mamba-370M", 
         4, 
         2048, 
         get_zyphra_mamba, 
         get_neo_tokenizer
     )]
-
-    # model_batch_sizes = {
-    #     # "pythia-14m": 8,
-    #     # "pythia-70m": 8,
-    #     # "pythia-160m": 4,
-    #     # "pythia-410m": 4,
-    #     # "pythia-1b": 4,
-    #     # "pythia-1.4b": 8,
-    #     # "pythia-2.8b": 4,
-    #     # "pythia-6.9b": 2,
-    #     # "pythia-12b": 1,
-    #     # "pythia-14m-warmup01": 8,
-    #     # "pythia-70m-warmup01": 8,
-    #     "mamba-160m": 4,
-    # }
-    # model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(7, 10)})
-    # model_batch_sizes.update({f"pythia-70m-seed{i}": 8 for i in range(1, 10)})
-    # model_batch_sizes.update({f"pythia-160m-seed{i}": 8 for i in range(1, 10)})
-    # model_batch_sizes.update(
-        # {f"pythia-410m-seed{i}": 8 for i in list(range(1, 5)) + [6]}
-    # )
-
-    # TODO # model_batch_sizes.update({f"pythia-14m-seed{i}": 8 for i in range(1, 8)})
-    # print(model_batch_sizes)
     
-    d_vocab = 50277  # len(tokenizer.vocab)  # 50277
+    d_vocab = 50277  # len(tokenizer.vocab) 
     num_samples = 1024
 
     log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
@@ -420,12 +397,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="pythia-deduped-bigrams.pkl",
+        default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
         help="Path to pickled sparse scipy array of bigram counts over the Pile",
     )
     parser.add_argument(
         "--pile_path",
-        default="val_tokenized.hf",
+        default="/mnt/ssd-1/lucia/val_tokenized.hf",
         help="Path to Pile validation data",
     )
     parser.add_argument(

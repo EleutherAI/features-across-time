@@ -253,7 +253,7 @@ def ngram_model_worker(
             ).item()
             running_step_bigram_loss_mean += bigram_loss_mean / num_iters
 
-            del bigram_sample, unigram_sample
+            del bigram_sample, unigram_sample, bigram_logits, unigram_logits
 
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
             logits = model(sample).logits[:, :, :d_vocab]

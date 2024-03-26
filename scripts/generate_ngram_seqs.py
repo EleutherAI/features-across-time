@@ -48,27 +48,15 @@ class NgramModel:
             result.append(next)
         return torch.cat(result, dim=1)
 
-    def generate_trigrams(self) -> torch.Tensor:
+    def generate_trigrams(self, num_samples: int) -> NDArray:
         """Auto-regressively generate trigram model sequence. Initialize each
-        sequence by sampling from a unigram and then a bigram model."""
-        start = time.time()
-        result = torch.zeros(self.batch, self.seq_len, dtype=torch.int64)
-        result[:, 0] = torch.multinomial(self.unigrams, self.batch, replacement=True)
-        rows = self.bigrams[result[:, 0].cpu().numpy()]
-        result[:, 1] = torch.multinomial(torch.tensor(rows, device="cuda"), 1).squeeze(-1)
-
-        # Build as lists
-        for i in tqdm(range(2, self.seq_len)):
-            next = torch.zeros(self.batch, dtype=torch.int64)
-            for j in range(self.batch): # todo vectorized mmap_index.sample over batch
-                item = result[j, i - 2:i].tolist() # last two tokens of each batch [batch, 2]
-                # todo try catch if we hit a sequence that only ever exists at the end of lines
-                # the index is currently built on unchunked data so this shouldn't happen
-                next[j] = self.mmap_index.sample(item)
-            result[:, i] = next
-        # print(result.shape, "time taken: ", time.time() - start)
-
-        return result
+        sequence by sampling from a unigram and then a bigram model.
+        
+        TODO try catch if we hit a sequence that only ever exists at the end of lines.
+        The index is currently built on unchunked data so this shouldn't happen.
+        """
+        samples = self.mmap_index.batch_sample([], n=3, k=self.seq_len, num_samples=num_samples)
+        return np.array(samples)
 
 
     def perplexity(self, sample: NDArray):
@@ -103,11 +91,8 @@ def generate_bigram_samples(batch, ngram_model):
 
         np.save("bigram-sequences.npy", data)
 
-def generate_trigram_samples(batch, ngram_model):
-        data = np.zeros((1024, 2049), dtype=np.int64)
-        for i in tqdm(range(0, 1024, batch)):
-            sample = ngram_model.generate_trigrams()
-            data[i : i + batch, :] = sample.cpu().numpy()
+def generate_trigram_samples(ngram_model):
+        data = ngram_model.generate_trigrams(num_samples=1024)
 
         np.save("trigram-sequences.npy", data)
 

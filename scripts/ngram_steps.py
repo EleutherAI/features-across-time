@@ -7,21 +7,19 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable
 
-
 import numpy as np
 import pandas as pd
+import tqdm.auto as tqdm
 import scipy
+from scipy import stats
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-import tqdm.auto as tqdm
-from mamba_ssm import MambaLMHeadModel
-from datasets import load_from_disk
-from scipy import stats
 from torch.utils.data import DataLoader
+from datasets import load_from_disk
 from transformers import AutoTokenizer
-from utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
-
+from scriptutils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
+from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba
 
 def batch_generator(dataset, batch_size):
     for i in range(0, len(dataset), batch_size):
@@ -57,6 +55,8 @@ class NgramModel:
         sparse_csr_bigram_probs = scipy.sparse.coo_matrix(
             (values, (indices[0], indices[1])), shape=shape
         ).tocsr()
+        del sparse_bigram_probs, indices, values, shape
+
         self.log_bigrams = torch.sparse_csr_tensor(
             sparse_csr_bigram_probs.indptr.astype(np.int64),
             sparse_csr_bigram_probs.indices.astype(np.int64),
@@ -183,13 +183,14 @@ def get_confidence_intervals(
 
 @dataclass
 class Experiment:
-    def __init__(self, team: str, model_name: str, batch_size: int, seq_len: int, get_model: Callable, get_tokenizer: Callable):
-        self.team = team
-        self.model_name = model_name
-        self.batch_size = batch_size
-        self.get_model = get_model
-        self.get_tokenizer = get_tokenizer
-        self.seq_len = seq_len
+    team: str
+    model_name: str
+    batch_size: int
+    seq_len: int
+    d_vocab: int
+    num_samples: int
+    get_model: Callable
+    get_tokenizer: Callable
 
     
 @torch.inference_mode()
@@ -200,8 +201,6 @@ def ngram_model_worker(
     model_path: str,
     pile_path: str,
     tmp_cache_path: str,
-    num_samples: int,
-    d_vocab: int,
 ) -> pd.DataFrame:
     tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
@@ -225,17 +224,18 @@ def ngram_model_worker(
     div_means = {label: [] for label in div_labels}
     div_conf_intervals = {label: [] for label in div_labels}
 
-    num_iters = math.ceil(num_samples / experiment.batch_size)
+    num_iters = math.ceil(experiment.num_samples / experiment.batch_size)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
+    data_loader = DataLoader(load_from_disk(pile_path), batch_size=experiment.batch_size)
     for step in steps:
-        pile = iter(DataLoader(load_from_disk(pile_path), batch_size=experiment.batch_size))
+        pile = iter(data_loader)
         model = experiment.get_model(experiment.team, experiment.model_name, step)
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
-            unigram_sample = ngram_model.generate_unigrams()
-            unigram_logits = model(unigram_sample).logits[:, :, :d_vocab]
+            unigram_sample = ngram_model.generate_unigrams().long()
+            unigram_logits = model(unigram_sample).logits[:, :, :experiment.d_vocab]
 
             unigram_loss_mean = F.cross_entropy(
                 unigram_logits[:, :-1].reshape(experiment.batch_size * experiment.seq_len, -1),
@@ -244,8 +244,8 @@ def ngram_model_worker(
             ).item()
             running_step_unigram_loss_mean += unigram_loss_mean / num_iters
 
-            bigram_sample = ngram_model.generate_bigrams(i)
-            bigram_logits = model(bigram_sample).logits[:, :, :d_vocab]
+            bigram_sample = ngram_model.generate_bigrams(i).long()
+            bigram_logits = model(bigram_sample).logits[:, :, :experiment.d_vocab]
             bigram_loss_mean = F.cross_entropy(
                 bigram_logits[:, :-1].reshape(experiment.batch_size * experiment.seq_len, -1),
                 bigram_sample[:, 1:].reshape(experiment.batch_size * experiment.seq_len),
@@ -256,9 +256,9 @@ def ngram_model_worker(
             del bigram_sample, unigram_sample, bigram_logits, unigram_logits
 
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
-            logits = model(sample).logits[:, :, :d_vocab]
+            logits = model(sample).logits[:, :, :experiment.d_vocab]
             divergences, _ = get_mean_divergences(
-                sample, logits, ngram_model, experiment.batch_size, d_vocab
+                sample, logits, ngram_model, experiment.batch_size, experiment.d_vocab
             )
             running_step_div_means += (divergences / num_iters).cpu()
             pbar.update(1)
@@ -290,7 +290,8 @@ def ngram_model_worker(
         f"top_conf_{label}": [interval[1] for interval in div_conf_intervals[label]]
         for label in div_labels
     }
-    return pd.DataFrame(
+
+    df = pd.DataFrame(
         {
             "step": steps,
             "mean_unigram_loss": unigram_means,
@@ -310,49 +311,37 @@ def ngram_model_worker(
             **div_top_conf_data,
         }
     )
-        
-
-def get_neo_tokenizer():
-    return AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-
-
-def get_zyphra_mamba(team: str, model_name: str, step: int):
-    return MambaLMHeadModel.from_pretrained(
-        f"{team}/{model_name}",
-        iteration=step,
-        device="cuda"
+    df.to_csv(
+        Path.cwd()
+        / "output"
+        / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}_{gpu_id}_{steps}.csv",
+        index=False,
     )
-
-
-# def get_eleuther_mamba(team: str, model_name: str, step: int, tmp_cache_dir: str):
-#     # AutoModel, MambaLMHeadModel, MambaForCausalLM
-#     return MambaLMHeadModel.from_pretrained(
-#         f"{team}/{model_name}", 
-#         revision=f"step{step}",
-#         # torch_dtype="auto",
-#         # cache_dir=tmp_cache_dir,
-#         device="cuda"
-#     )
+    return df
 
 
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     experiments = [Experiment(
-        team="Zyphra", 
-        model_name="Mamba-370M", 
-        batch_size=2, 
+        team="hails", 
+        model_name="mamba-160m-hf", 
+        batch_size=4, 
         seq_len=2048, 
-        get_model=get_zyphra_mamba, 
+        d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+        num_samples=1024,
+        get_model=get_hails_mamba, 
         get_tokenizer=get_neo_tokenizer
     )]
-    
-    d_vocab = 50277  # len(tokenizer.vocab) 
-    num_samples = 1024
 
-    # log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
-    # linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 32_000, 61_000]
-    # final_steps = [143_000]
-    # steps = log_steps + linear_step_samples + final_steps
+    log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
+    linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 32_000, 61_000]
+    final_steps = [143_000]
+    steps = log_steps + linear_step_samples + final_steps
 
+    # steps = remedial_steps = [8, 16, 32]
+    # zyphra_log_steps = [2**i for i in range(int(math.log2(2048)) + 1)]
+    # zyphra_linear_step_samples = [10_000, 20_000, 40_000, 80_000, 160_000, 320_000]
+    # zyphra_final_steps = [610_000]
+    # steps = zyphra_log_steps + zyphra_linear_step_samples + zyphra_final_steps
     zyphra_log_steps = [1] + [2**i for i in range(int(math.log2(2048)) + 1)]
     zyphra_linear_step_samples = [10_000, 20_000, 40_000, 80_000, 160_000, 320_000]
     zyphra_final_steps = [610_000]
@@ -375,8 +364,6 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
                 ngram_path,
                 pile_path,
                 tmp_cache_path,
-                num_samples,
-                d_vocab,
             )
             for i in range(len(step_indices))
         ]
@@ -384,13 +371,13 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         with mp.Pool(len(step_indices)) as pool:
             dfs = pool.starmap(ngram_model_worker, args)
 
-        df = pd.concat(dfs)
-        df.to_csv(
-            Path.cwd()
-            / "output"
-            / f"means_ngrams_model_{experiment.model_name}_{num_samples}.csv",
-            index=False,
-        )
+            df = pd.concat(dfs)
+            df.to_csv(
+                Path.cwd()
+                / "output"
+                / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}.csv",
+                index=False,
+            )
 
 
 if __name__ == "__main__":

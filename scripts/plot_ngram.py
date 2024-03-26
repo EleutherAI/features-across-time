@@ -42,7 +42,7 @@ def hex_to_rgba(hex_color, opacity=0.5):
 
 
 def plot_bpb_and_divergences(
-    df: pd.DataFrame, image_name: str, debug: bool, qualitative=False
+    df: pd.DataFrame, image_name: str, debug: bool, model_series: str, qualitative=False
 ):
     if not debug:
         write_garbage()
@@ -53,14 +53,14 @@ def plot_bpb_and_divergences(
     div_metadata = [
         (
             "unigram_logit_kl_div",
-            "D<sub>KL</sub>(unigram model || Pythia) across time",
+            f"D<sub>KL</sub>(unigram model || {model_series}) across time",
             [0, 7],
             2,
             2,
         ),
         (
             "bigram_logit_kl_div",
-            "D<sub>KL</sub>(bigram model || Pythia) across time",
+            f"D<sub>KL</sub>(bigram model || {model_series}) across time",
             [0, 7],
             2,
             1,
@@ -274,30 +274,40 @@ def plot_bpb_and_divergences(
 
 def plot_model_sizes(debug: bool):
     num_samples = 1024
+    model_series="Mamba" # Pythia
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
+    # model_metadata = [
+    #     ("pythia-14m", "14M", 8),
+    #     ("pythia-70m", "70M", 8),
+    #     ("pythia-160m", "160M", 8),
+    #     ("pythia-410m", "410M", 8),
+    #     ("pythia-1b", "1B", 8),
+    #     ("pythia-1.4b", "1.4B", 8),
+    #     ("pythia-2.8b", "2.8B", 8),
+    #     ("pythia-6.9b", "6.9B", 8),
+    #     ("pythia-12b", "12B", 8),
+    # ]
     model_metadata = [
-        ("pythia-14m", "14M"),
-        ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        ("pythia-1.4b", "1.4B"),
-        ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
+        ("mamba-160m-hf", "160m", 6),
+        ("Mamba-370M", "370M", 7)
     ]
     model_dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
-        supplementary_kl_div_path = (
-            Path.cwd()
-            / "output"
-            / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
-        )
-        model_df = add_kl_data(model_df, supplementary_kl_div_path)
+    for model_name, pretty_model_name, num_chunks in model_metadata:
+        dfs = []
+        for i in range(num_chunks):
+            model_df = pd.read_csv(
+                Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_{i}.csv"
+            )
+            dfs.append(model_df)
+        model_df = pd.concat(dfs)
+
+        # supplementary_kl_div_path = (
+        #     Path.cwd()
+        #     / "output"
+        #     / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
+        # )
+        # model_df = add_kl_data(model_df, supplementary_kl_div_path)
         model_df["step"] = model_df["step"] + 1
         model_df["model_name"] = model_name
         model_df["pretty_model_name"] = pretty_model_name
@@ -306,7 +316,8 @@ def plot_model_sizes(debug: bool):
     df = pd.concat(model_dfs)
 
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
-    plot_bpb_and_divergences(df, image_name, debug)
+    
+    plot_bpb_and_divergences(df, image_name, debug, model_series)
 
 
 def main():

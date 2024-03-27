@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import math
 
 import numpy as np
 import pandas as pd
@@ -7,6 +8,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
 from plotly.subplots import make_subplots
+
+from scriptutils.experiment import Experiment
+from scriptutils.load_model import get_neo_tokenizer, get_zyphra_mamba, get_hails_mamba
 
 
 def add_steps(df, supplementary_path):
@@ -17,14 +21,13 @@ def add_steps(df, supplementary_path):
     return df
 
 
-def main(debug: bool):
+def main(debug: bool, experiment: Experiment):
     if not debug:
         write_garbage()
 
     os.makedirs(Path.cwd() / "images", exist_ok=True)
-    image_name = Path.cwd() / "images" / "in-context.pdf"
+    image_name = Path.cwd() / "images" / f"in-context-{experiment.team}--{experiment.model_name}.pdf"
 
-    num_samples = 1024
     bpb_coefficient = 0.3650388
     entropies = [2.89, 2.04]
     marker_series = [
@@ -44,23 +47,32 @@ def main(debug: bool):
         "hexagram",
     ]
 
-    df = pd.read_csv(Path.cwd() / "output" / f"pythia-12b_{num_samples}_steps.csv")
+    df = pd.read_csv(Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps.csv")
     supplementary_path = (
-        Path.cwd() / "output" / f"pythia-12b_{num_samples}_steps_additional.csv"
+        Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps_additional.csv"
     )
     df = add_steps(df, supplementary_path)
     tick_values, tick_texts = base_2_log_ticks(df["index"])
 
     # Add missing step column
-    steps = [16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000]
-    group_numbers = df["index"].eq(0).cumsum() - 1
-    df["step"] = group_numbers.apply(
-        lambda x: steps[x] if x < len(steps) else steps[-1]
-    )
+    # steps = [16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000]
+    # group_numbers = df["index"].eq(0).cumsum() - 1
+    # df["step"] = group_numbers.apply(
+    #     lambda x: experiment.steps[x] if x < len(experiment.steps) else experiment.steps[-1]
+    # )
 
     # Remove a step or two because the confidence intervals overlap too much
-    df = df[df["step"] != 131_000]
-    df = df[df["step"] != 33_000]
+    df = df[df["step"] != 0]
+    df = df[df["step"] != 2]
+    df = df[df["step"] != 8]
+    df = df[df["step"] != 32]
+    df = df[df["step"] != 128]
+    df = df[df["step"] != 512]
+    df = df[df["step"] != 2048]
+    df = df[df["step"] != 20_000]
+    df = df[df["step"] != 80_000]
+    df = df[df["step"] != 320_000]
+
 
     # Make index 1-indexed
     df["index"] = df["index"] + 1
@@ -100,7 +112,8 @@ def main(debug: bool):
         # For some reason the legend items are listed in reverse order
         for i, step in enumerate(reversed(step_order)):
             group_df = df[df["step"] == step]
-            color = px.colors.sequential.Plasma_r[i + 1]
+            # (px.colors.qualitative.Plotly + px.colors.qualitative.D3)
+            color = px.colors.sequential.Plasma_r[i]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
             fig.add_trace(
@@ -189,6 +202,33 @@ def main(debug: bool):
     )
     fig.write_image(image_name, format="pdf")
 
-
+   
 if __name__ == "__main__":
-    main(debug=False)
+    experiment = Experiment(
+        num_samples=1024,
+        team="hails", 
+        model_name="mamba-160m-hf", 
+        batch_size=1,
+        seq_len=2049, 
+        steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
+        d_vocab=50_277,
+        get_model=get_hails_mamba, 
+        get_tokenizer=get_neo_tokenizer,
+        eod_index=0
+    )
+    # experiment = Experiment(
+    #     num_samples=1024,
+    #     batch_size=2, 
+    #     seq_len=2049, 
+    #     team="Zyphra", 
+    #     model_name="Mamba-370M", 
+    #     get_model=get_zyphra_mamba, 
+    #     get_tokenizer=get_neo_tokenizer,
+    #     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+    #     # roughly log spaced steps + final step
+    #     steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
+    #     eod_index=get_neo_tokenizer().eos_token_id
+    # )
+    main(debug=False, experiment=experiment)
+
+

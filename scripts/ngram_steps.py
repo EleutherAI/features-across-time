@@ -20,6 +20,7 @@ from datasets import load_from_disk
 from transformers import AutoTokenizer
 from scriptutils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
 from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba
+from scriptutils.experiment import Experiment, run_experiment_workers
 
 def batch_generator(dataset, batch_size):
     for i in range(0, len(dataset), batch_size):
@@ -27,8 +28,8 @@ def batch_generator(dataset, batch_size):
 
 
 class NgramModel:
-    def __init__(self, path: str, batch=1, seq_len=2049):
-        self.tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+    def __init__(self, path: str, batch=1, seq_len=2049, tokenizer=None):
+        self.tokenizer = tokenizer if tokenizer is not None else AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
         self.d_vocab = len(self.tokenizer.vocab)
         self.batch = batch
         self.seq_len = seq_len
@@ -48,6 +49,7 @@ class NgramModel:
             .log()
             .to_sparse()
         )
+        del bigram_counts
 
         indices = sparse_bigram_probs.indices().numpy()
         values = sparse_bigram_probs.values().numpy()
@@ -56,7 +58,6 @@ class NgramModel:
             (values, (indices[0], indices[1])), shape=shape
         ).tocsr()
         del sparse_bigram_probs, indices, values, shape
-
         self.log_bigrams = torch.sparse_csr_tensor(
             sparse_csr_bigram_probs.indptr.astype(np.int64),
             sparse_csr_bigram_probs.indices.astype(np.int64),
@@ -64,7 +65,6 @@ class NgramModel:
             dtype=torch.float32,
             device="cuda",
         )
-
         self.bigram_samples = np.load("bigram-sequences.npy")
 
     def generate_unigrams(self) -> torch.Tensor:
@@ -181,31 +181,21 @@ def get_confidence_intervals(
     return stats.norm.interval(confidence, loc=mean, scale=sem)
 
 
-@dataclass
-class Experiment:
-    team: str
-    model_name: str
-    batch_size: int
-    seq_len: int
-    d_vocab: int
-    num_samples: int
-    get_model: Callable
-    get_tokenizer: Callable
-
-    
 @torch.inference_mode()
 def ngram_model_worker(
     gpu_id: int,
-    steps: list[int],
     experiment: Experiment,
     model_path: str,
     pile_path: str,
     tmp_cache_path: str,
+    steps: list[int],
 ) -> pd.DataFrame:
+    torch.cuda.set_device(gpu_id)
+
     tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
-    torch.cuda.set_device(gpu_id)
+
     ngram_model = NgramModel(model_path, experiment.batch_size)
     print("Loaded n-gram data...")
 
@@ -229,7 +219,7 @@ def ngram_model_worker(
     data_loader = DataLoader(load_from_disk(pile_path), batch_size=experiment.batch_size)
     for step in steps:
         pile = iter(data_loader)
-        model = experiment.get_model(experiment.team, experiment.model_name, step)
+        model = experiment.get_model(experiment.team, experiment.model_name, step, tmp_cache_dir)
         running_step_unigram_loss_mean = 0.0
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
@@ -243,6 +233,7 @@ def ngram_model_worker(
                 reduction="mean",
             ).item()
             running_step_unigram_loss_mean += unigram_loss_mean / num_iters
+            del bigram_sample, bigram_logits
 
             bigram_sample = ngram_model.generate_bigrams(i).long()
             bigram_logits = model(bigram_sample).logits[:, :, :experiment.d_vocab]
@@ -253,7 +244,7 @@ def ngram_model_worker(
             ).item()
             running_step_bigram_loss_mean += bigram_loss_mean / num_iters
 
-            del bigram_sample, unigram_sample, bigram_logits, unigram_logits
+            del unigram_sample, unigram_logits
 
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
             logits = model(sample).logits[:, :, :experiment.d_vocab]
@@ -314,73 +305,57 @@ def ngram_model_worker(
     df.to_csv(
         Path.cwd()
         / "output"
-        / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}_{gpu_id}_{steps}.csv",
+        / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}_{gpu_id}.csv",
         index=False,
     )
     return df
 
 
+# zyphra_experiment = Experiment(
+#     num_samples=1024,
+#     batch_size=4, 
+#     seq_len=2048, 
+#     team="Zyphra", 
+#     model_name="Mamba-370M", 
+#     get_model=get_zyphra_mamba, 
+#     get_tokenizer=get_neo_tokenizer,
+#     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+#     # roughly log spaced steps + final step
+#     steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000]
+# )
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     experiments = [Experiment(
-        team="hails", 
-        model_name="mamba-160m-hf", 
+        num_samples=1024,
         batch_size=4, 
         seq_len=2048, 
-        d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
-        num_samples=1024,
+        team="hails", 
+        model_name="mamba-160m-hf", 
         get_model=get_hails_mamba, 
-        get_tokenizer=get_neo_tokenizer
+        get_tokenizer=get_neo_tokenizer,
+        d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+        steps=[0] + [2**i for i in range(int(math.log2(256)) + 1)] + [1000, 2000, 4000, 8000, 16_000, 32_000, 61_000, 143_000]
     )]
 
-    log_steps = [0] + [2**i for i in range(int(math.log2(256)) + 1)]
-    linear_step_samples = [1000, 2000, 4000, 8000, 16_000, 32_000, 61_000]
-    final_steps = [143_000]
-    steps = log_steps + linear_step_samples + final_steps
-
-    # steps = remedial_steps = [8, 16, 32]
-    # zyphra_log_steps = [2**i for i in range(int(math.log2(2048)) + 1)]
-    # zyphra_linear_step_samples = [10_000, 20_000, 40_000, 80_000, 160_000, 320_000]
-    # zyphra_final_steps = [610_000]
-    # steps = zyphra_log_steps + zyphra_linear_step_samples + zyphra_final_steps
-    zyphra_log_steps = [1] + [2**i for i in range(int(math.log2(2048)) + 1)]
-    zyphra_linear_step_samples = [10_000, 20_000, 40_000, 80_000, 160_000, 320_000]
-    zyphra_final_steps = [610_000]
-    steps = zyphra_log_steps + zyphra_linear_step_samples + zyphra_final_steps
-    num_gpus = torch.cuda.device_count()
-    mp.set_start_method("spawn")
-
-    max_steps_per_chunk = math.ceil(len(steps) / num_gpus)
-    step_indices = [
-        steps[i : i + max_steps_per_chunk]
-        for i in range(0, len(steps), max_steps_per_chunk)
-    ]
-
     for experiment in experiments:
-        args = [
-            (
-                i,
-                step_indices[i],
-                experiment,
-                ngram_path,
-                pile_path,
-                tmp_cache_path,
-            )
-            for i in range(len(step_indices))
-        ]
-        print(f"Parallelising over {len(step_indices)} GPUs...")
-        with mp.Pool(len(step_indices)) as pool:
-            dfs = pool.starmap(ngram_model_worker, args)
-
-            df = pd.concat(dfs)
-            df.to_csv(
-                Path.cwd()
-                / "output"
-                / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}.csv",
-                index=False,
-            )
+        df = run_experiment_workers(
+            experiment, 
+            ngram_model_worker, 
+            ngram_path, 
+            pile_path, 
+            tmp_cache_path
+        )
+        
+        df.to_csv(
+            Path.cwd()
+            / "output"
+            / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}.csv",
+            index=False,
+        )
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn")
+
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )

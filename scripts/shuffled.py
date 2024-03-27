@@ -49,7 +49,10 @@ def get_bow_sample(tokens: torch.Tensor, eod_indices: list[torch.Tensor]):
     return sample
 
 
-def split_by_eod(loss: torch.Tensor, eod_indices: [torch.Tensor]) -> list[list]:
+def split_by_eod(
+        loss: torch.Tensor, 
+        eod_indices: list[torch.Tensor]
+) -> list[list]:
     result = []
     start_idx = 0
     for i in range(loss.shape[0]):

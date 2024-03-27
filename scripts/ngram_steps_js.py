@@ -395,7 +395,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="pythia-deduped-bigrams.pkl",
+        default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
         help="Path to pickled sparse scipy array of bigram counts over the Pile",
     )
     parser.add_argument(

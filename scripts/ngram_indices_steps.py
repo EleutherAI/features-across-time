@@ -13,12 +13,11 @@ import tqdm.auto as tqdm
 from ngram_steps import NgramModel
 from scipy import stats
 from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
 )
-
+from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba
+from scriptutils.experiment import Experiment, run_experiment_workers
 
 def encode(input: list[str], encoder: PreTrainedTokenizer, seq_len: int):
     result = []
@@ -72,7 +71,7 @@ def get_sequence_losses(
     """Get sequence losses. Start a new sequence at each EOD token."""
     outputs = model(sample)
     eod_indices = [
-        torch.where(sample[i] == eod_token_index)[0] for i in range(len(sample))
+        torch.where(sample[i].eq(eod_token_index))[0] for i in range(len(sample))
     ]
     loss = F.cross_entropy(
         outputs.logits[:, :-1, :d_vocab].reshape(batch * (seq_len - 1), -1),
@@ -85,26 +84,19 @@ def get_sequence_losses(
 @torch.inference_mode()
 def multi_step_worker(
     gpu_id: int,
-    model_name: str,
-    team: str,
+    experiment: Experiment,
     ngram_path: str,
     pile_path: str,
     tmp_cache_path: str,
-    num_samples: int,
-    batch: int,
-    seq_len: int,
-    d_vocab: int,
-    eod_index: int,
-    steps: list[str],
-    tokenizer: PreTrainedTokenizer,
+    steps: list[str]
 ) -> pd.DataFrame:
-    hf_model_name = f"{team}/{model_name}"
+    torch.cuda.set_device(gpu_id)
 
+    tokenizer = experiment.get_tokenizer()
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
-
-    ngram_model = NgramModel(ngram_path, batch=batch, seq_len=seq_len)
+    ngram_model = NgramModel(ngram_path, batch=experiment.batch_size, seq_len=experiment.seq_len, tokenizer=tokenizer)
     # use_encode = not (
     #     isinstance(tokenizer, AutoTokenizer)
     #     and NgramModel.tokenizer.name_or_path == tokenizer.name_or_path
@@ -120,15 +112,10 @@ def multi_step_worker(
     bottom_conf_intervals = {label: [] for label in labels}
     top_conf_intervals = {label: [] for label in labels}
 
-    num_iters = math.ceil(num_samples / batch)
+    num_iters = math.ceil(experiment.num_samples / experiment.batch_size)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
-        model = AutoModelForCausalLM.from_pretrained(
-            hf_model_name,
-            revision=f"step{step}",
-            torch_dtype="auto",
-            cache_dir=tmp_cache_dir,
-        ).cuda()
+        model = experiment.get_model(experiment.team, experiment.model_name, step, tmp_cache_dir)
 
         step_unigram_losses = []
         step_bigram_losses = []
@@ -136,46 +123,46 @@ def multi_step_worker(
 
         for i in range(num_iters):
             step_unigram_sample = (
-                encode(ngram_model.generate_unigram_strs(), tokenizer, seq_len)
+                encode(ngram_model.generate_unigram_strs(), tokenizer, experiment.seq_len)
                 if use_encode
                 else ngram_model.generate_unigrams()
             )
             step_unigram_losses.extend(
                 get_sequence_losses(
-                    model, step_unigram_sample, batch, seq_len, eod_index
+                    model, step_unigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index, experiment.d_vocab
                 )
             )
             step_bigram_sample = (
-                encode(ngram_model.generate_bigram_strs(), tokenizer, seq_len)
+                encode(ngram_model.generate_bigram_strs(), tokenizer, experiment.seq_len)
                 if use_encode
                 else ngram_model.generate_bigrams(i)
             )
             step_bigram_losses.extend(
                 get_sequence_losses(
-                    model, step_bigram_sample, batch, seq_len, eod_index
+                    model, step_bigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index, experiment.d_vocab
                 )
             )
             # step_random_sample = torch.randint(
-            #     0, d_vocab, [batch, seq_len], device="cuda"
+            #     0, experiment.d_vocab, [experiment.batch_size, experiment.seq_len], device="cuda"
             # )
             # step_random_losses.extend(
             #     get_sequence_losses(
-            #         model, step_random_sample, batch, seq_len, eod_index
+            #         model, step_random_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index
             #     )
             # )
             pbar.update(1)
 
-        token_indices.extend(list(range(seq_len - 1)))
-        step_indices.extend([int(step)] * (seq_len - 1))
+        token_indices.extend(list(range(experiment.seq_len - 1)))
+        step_indices.extend([int(step)] * (experiment.seq_len - 1))
         mean_unigram_loss, unigram_conf_intervals = positional_summary_stats(
-            step_unigram_losses, (seq_len - 1)
+            step_unigram_losses, (experiment.seq_len - 1)
         )
         means["unigram_loss"].extend(mean_unigram_loss)
         bottom_conf_intervals["unigram_loss"].extend(unigram_conf_intervals[0])
         top_conf_intervals["unigram_loss"].extend(unigram_conf_intervals[1])
 
         mean_bigram_loss, bigram_conf_intervals = positional_summary_stats(
-            step_bigram_losses, (seq_len - 1)
+            step_bigram_losses, (experiment.seq_len - 1)
         )
         means["bigram_loss"].extend(mean_bigram_loss)
         bottom_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[0])
@@ -190,74 +177,61 @@ def multi_step_worker(
 
         shutil.rmtree(tmp_cache_dir, ignore_errors=True)
 
-    index_data = {"index": token_indices}
+    index_data = {
+        "index": token_indices, 
+        "step": step_indices
+    }
     mean_data = {f"mean_{label}": means[label] for label in labels}
     bottom_conf_data = {
         f"bottom_conf_{label}": bottom_conf_intervals[label] for label in labels
     }
     top_conf_data = {f"top_conf_{label}": top_conf_intervals[label] for label in labels}
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {**index_data, **mean_data, **bottom_conf_data, **top_conf_data}
     )
+    df.to_csv(
+        Path.cwd()
+        / "output"
+        / f"{experiment.model_name}_{experiment.num_samples}_steps_{gpu_id}_{steps}.csv",
+        index=False,
+    )
+    
+    return df
 
-
+# experiment = Experiment(
+#     num_samples=1024,
+#     team="hails", 
+#     model_name="mamba-160m-hf", 
+#     batch_size=1,
+#     seq_len=2049, 
+#     steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 143_000], # done: 66_000, 131_000, 
+#     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+#     get_model=get_hails_mamba, 
+#     get_tokenizer=get_neo_tokenizer,
+#     eod_index=0 # tokenizer.eos_token_id
+# )
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
-    team = "EleutherAI"
-    model_batch_sizes = {"pythia-12b": 1}
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    # team = "LLM360"
-    # model_batch_sizes = {"Amber": 1}
-    # tokenizer = LlamaTokenizer.from_pretrained("LLM360/Amber")
+    experiment = Experiment(
+        num_samples=1024,
+        batch_size=2, 
+        seq_len=2049, 
+        team="Zyphra", 
+        model_name="Mamba-370M", 
+        get_model=get_zyphra_mamba, 
+        get_tokenizer=get_neo_tokenizer,
+        d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+        # roughly log spaced steps + final step
+        steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
+        eod_index=get_neo_tokenizer().eos_token_id
+    )
 
-    vocab_size = 50277  # len(tokenizer.vocab)
-    eod_index = 0  # tokenizer.eos_token_id
-    num_samples = 1024
-    batch = 1
-    seq_len = 2049
-
-    steps = [16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000]
-
-    # Amber steps go from 0 to 359. Assuming linearly spaced (not specified)
-    # steps = ["000"] + [f"{2**i:03}" for i in range(int(math.log2(359)) + 1)] + ["358"]
-    print(steps)
-    num_gpus = torch.cuda.device_count()
-
-    max_steps_per_chunk = math.ceil(len(steps) / num_gpus)
-    step_indices = [
-        steps[i : i + max_steps_per_chunk]
-        for i in range(0, len(steps), max_steps_per_chunk)
-    ]
-
-    for model_name, batch in model_batch_sizes.items():
-        args = [
-            (
-                i,
-                model_name,
-                team,
-                ngram_path,
-                pile_path,
-                tmp_cache_path,
-                num_samples,
-                batch,
-                seq_len,
-                vocab_size,
-                eod_index,
-                step_indices[i],
-                tokenizer,
-            )
-            for i in range(len(step_indices))
-        ]
-        print(f"Parallelising over {len(step_indices)} GPUs...")
-        with mp.Pool(len(step_indices)) as pool:
-            dfs = pool.starmap(multi_step_worker, args)
-
-            df = pd.concat(dfs)
-            df.to_csv(
-                Path.cwd()
-                / "output"
-                / f"{model_name}_{num_samples}_steps_additional.csv",
-                index=False,
-            )
+    df = run_experiment_workers(experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path)
+    df.to_csv(
+        Path.cwd()
+        / "output"
+        / f"{experiment.model_name}_{experiment.num_samples}_steps.csv",
+        index=False,
+    )
 
 
 if __name__ == "__main__":
@@ -268,7 +242,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="pythia-deduped-bigrams.pkl",
+        default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
         help="Path to pickled sparse scipy array of bigram counts over the Pile",
     )
     parser.add_argument(

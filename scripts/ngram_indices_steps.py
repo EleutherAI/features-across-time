@@ -19,6 +19,7 @@ from scriptutils.ngram_model import NgramModel
 from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba
 from scriptutils.experiment import Experiment, run_experiment_workers
 
+
 def encode(input: list[str], encoder: PreTrainedTokenizer, seq_len: int):
     result = []
     for row in input:
@@ -138,7 +139,7 @@ def multi_step_worker(
                 )
             )
             step_bigram_sample = (
-                encode(ngram_model.generate_bigram_strs(), tokenizer, experiment.seq_len)
+                encode(ngram_model.generate_bigram_strs(i), tokenizer, experiment.seq_len)
                 if use_encode
                 else ngram_model.generate_bigrams(i)
             )

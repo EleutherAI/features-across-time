@@ -54,7 +54,7 @@ def worker(
     random_losses = []
     for i in tqdm.tqdm(range(experiment.num_samples // experiment.batch_size)):
         bigram_sample = (
-            encode(ngram_model.generate_bigram_strs(), tokenizer, experiment.seq_len)
+            encode(ngram_model.generate_bigram_strs(i), tokenizer, experiment.seq_len)
             if use_encode
             else ngram_model.generate_bigrams(i)
         )

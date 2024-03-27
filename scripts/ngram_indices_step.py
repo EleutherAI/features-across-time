@@ -2,6 +2,7 @@ import argparse
 import os
 import pickle
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,97 +11,14 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 from scipy import stats
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
+from scriptutils.ngram_model import NgramModel
 from scriptutils.experiment import Experiment
 from scriptutils.load_model import get_auto_model, get_neo_tokenizer
-from ngram_indices_steps import split_by_eod, positional_summary_stats, get_sequence_losses
+from ngram_indices_steps import split_by_eod, positional_summary_stats, get_sequence_losses, encode
 
-class NgramModel:
-    def __init__(self, path: str, encode_tokenizer, batch=1, seq_len=2048):
-        self.decode_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-        self.encode_tokenizer = encode_tokenizer
-        self.d_vocab = len(self.decode_tokenizer.vocab)
-        self.batch = batch
-        self.seq_len = seq_len
 
-        with open(path, "rb") as f:
-            bigram_counts = pickle.load(f)
-
-        self.unigrams = (
-            torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
-        )  # small
-        self.bigrams = torch.sparse_csr_tensor(
-            bigram_counts.indptr.astype(np.int64),
-            bigram_counts.indices.astype(np.int64),
-            bigram_counts.data.astype(np.float32),
-            dtype=torch.float32,
-            device="cuda",
-        )  # 0.7 GB
-
-    def generate_unigrams(self) -> torch.Tensor:
-        tokens = torch.multinomial(
-            self.unigrams, self.batch * self.seq_len, replacement=True
-        ).reshape(self.batch, self.seq_len)
-        return self.transcode(tokens)
-
-    def generate_random(self) -> torch.Tensor:
-        return torch.randint(
-            0,
-            len(self.encode_tokenizer.vocab),
-            [self.batch, self.seq_len],
-            device="cuda",
-        )
-
-    # separate slice sparse array function with test
-    def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
-        """Given a batch of previous tokens, sample from a bigram model
-        using conditional distributions stored in a sparse CSR tensor."""
-        starts = self.bigrams.crow_indices()[prev]
-        ends = self.bigrams.crow_indices()[prev + 1]
-
-        # 0 padding to batch rows with variable numbers of non-zero elements
-        token_probs = torch.zeros(
-            (self.batch, self.d_vocab), dtype=torch.float32, device="cuda"
-        )
-        token_col_indices = torch.zeros(
-            (self.batch, self.d_vocab), dtype=torch.int32, device="cuda"
-        )
-        for i in range(self.batch):
-            token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
-                starts[i] : ends[i]
-            ]
-            token_col_indices[i, : ends[i] - starts[i]] = self.bigrams.col_indices()[
-                starts[i] : ends[i]
-            ]
-
-        sampled_value_indices = torch.multinomial(token_probs, 1)
-        return torch.gather(token_col_indices, 1, sampled_value_indices)
-
-    def generate_bigrams(self) -> torch.Tensor:
-        """Auto-regressively generate bigram model sequence. Initialize each
-        sequence by sampling from a unigram model."""
-        result = [
-            torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)
-        ]
-        for _ in range(self.seq_len - 1):
-            prev = result[-1]
-            result.append(self.sample_bigram(prev))
-
-        result = torch.cat(result, dim=-1)
-        return self.transcode(result)
-
-    def transcode(self, tokens: torch.Tensor):
-        encoded_result = []
-        for i in range(len(tokens)):
-            token_strs = self.decode_tokenizer.decode(tokens[i].tolist())
-            encoded_tokens = torch.tensor(
-                self.encode_tokenizer.encode(token_strs), device="cuda"
-            )
-            encoded_result.append(encoded_tokens[:self.seq_len])
-            assert (
-                len(encoded_result[-1]) >= self.seq_len
-            ), "Transcoded tokens too short; increase seq_length"
-        return torch.stack(encoded_result)
+def generate_random(d_vocab, batch, seq_len) -> torch.Tensor:
+    return torch.randint(0, d_vocab, [batch, seq_len], device="cuda")
 
 
 @torch.inference_mode()
@@ -110,9 +28,20 @@ def worker(
 ) -> pd.DataFrame:
     tmp_cache_dir = Path(".cache")
     os.makedirs(tmp_cache_dir, exist_ok=True)
+
+    tokenizer = experiment.get_tokenizer()
     ngram_model = NgramModel(
-        ngram_path, encode_tokenizer=experiment.get_tokenizer(), batch=experiment.batch_size, seq_len=experiment.seq_len
+        ngram_path, batch=experiment.batch_size, seq_len=experiment.seq_len
     )
+
+    use_encode = not (
+        isinstance(tokenizer, AutoTokenizer)
+        and NgramModel.tokenizer.name_or_path == tokenizer.name_or_path
+    )
+    if not use_encode:
+        del tokenizer
+
+
     model = experiment.get_model(experiment.team, experiment.model_name, 0, tmp_cache_dir)
     token_indices = []
     labels = ["unigram_loss", "bigram_loss", "random_loss"]
@@ -123,14 +52,24 @@ def worker(
     unigram_losses = []
     bigram_losses = []
     random_losses = []
-    for _ in tqdm.tqdm(range(experiment.num_samples // experiment.batch_size)):
-        bigram_sample = ngram_model.generate_bigrams()
+    for i in tqdm.tqdm(range(experiment.num_samples // experiment.batch_size)):
+        bigram_sample = (
+            encode(ngram_model.generate_bigram_strs(), tokenizer, experiment.seq_len)
+            if use_encode
+            else ngram_model.generate_bigrams(i)
+        )
         bigram_losses.extend(get_sequence_losses(model, bigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index))
-        unigram_sample = ngram_model.generate_unigrams()
+        
+        unigram_sample = (
+            encode(ngram_model.generate_unigram_strs(), tokenizer, experiment.seq_len)
+            if use_encode
+            else ngram_model.generate_unigrams()
+        )
         unigram_losses.extend(
             get_sequence_losses(model, unigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index)
         )
-        random_sample = ngram_model.generate_random()
+
+        random_sample = generate_random(experiment.d_vocab, experiment.batch_size, experiment.seq_len)
         random_losses.extend(get_sequence_losses(model, random_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index))
 
     mean_unigram_loss, unigram_conf_intervals = positional_summary_stats(

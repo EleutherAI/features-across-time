@@ -16,146 +16,12 @@ from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import GPTNeoXForCausalLM
 
+from scripts.scriptutils.ngram_model import NgramModel
+from scriptutils.divergences import one_hot_js_divergence, js_divergence, kl_divergence
 
 def batch_generator(dataset, batch_size):
     for i in range(0, len(dataset), batch_size):
         yield dataset[i : i + batch_size]["input_ids"]
-
-
-class NgramModel:
-    def __init__(self, path: str, d_vocab: int, batch=1, seq_len=2049):
-        self.d_vocab = d_vocab
-        self.batch = batch
-        self.seq_len = seq_len
-
-        with open(path, "rb") as f:
-            bigram_counts = pickle.load(f)
-
-        self.unigrams = (
-            torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
-        )  # small
-        self.bigrams = torch.sparse_csr_tensor(
-            bigram_counts.indptr.astype(np.int64),
-            bigram_counts.indices.astype(np.int64),
-            bigram_counts.data.astype(np.float32),
-            dtype=torch.float32,
-            device="cuda",
-        )  # 0.7 GB
-
-    def generate_unigrams(self) -> torch.Tensor:
-        return torch.multinomial(
-            self.unigrams, self.batch * self.seq_len, replacement=True
-        ).reshape(self.batch, self.seq_len)
-
-    def get_bigram_dists(self, prev: torch.Tensor) -> torch.Tensor:
-        starts = self.bigrams.crow_indices()[prev]
-        ends = self.bigrams.crow_indices()[prev + 1]
-
-        # 0 padding to batch rows with variable numbers of non-zero elements
-        # prev: 8 * 2048, 50000, 32 [batch seq d_vocab float32]
-        # bigram_dists: 8 * 2048, 50000, 32
-        bigram_dists = torch.zeros(
-            (len(prev), self.d_vocab), dtype=torch.float32, device="cuda"
-        )  # 0.2 GB
-        for i in range(len(prev)):
-            filled_col_indices = self.bigrams.col_indices()[starts[i] : ends[i]]
-            filled_col_values = self.bigrams.values()[starts[i] : ends[i]]
-            bigram_dists[i][filled_col_indices] = filled_col_values
-        return bigram_dists
-
-    # separate slice sparse array function with test
-    def sample_bigram(self, prev: torch.Tensor) -> torch.Tensor:
-        """Given a batch of previous tokens, sample from a bigram model
-        using conditional distributions stored in a sparse CSR tensor."""
-        starts = self.bigrams.crow_indices()[prev]
-        ends = self.bigrams.crow_indices()[prev + 1]
-
-        # 0 padding to batch rows with variable numbers of non-zero elements
-        token_probs = torch.zeros(
-            (self.batch, self.d_vocab), dtype=torch.float32, device="cuda"
-        )
-        token_col_indices = torch.zeros(
-            (self.batch, self.d_vocab), dtype=torch.int32, device="cuda"
-        )
-        for i in range(self.batch):
-            token_probs[i, : ends[i] - starts[i]] = self.bigrams.values()[
-                starts[i] : ends[i]
-            ]
-            token_col_indices[i, : ends[i] - starts[i]] = self.bigrams.col_indices()[
-                starts[i] : ends[i]
-            ]
-
-        sampled_value_indices = torch.multinomial(token_probs, 1)
-        return torch.gather(token_col_indices, 1, sampled_value_indices)
-
-    def generate_bigrams(self) -> torch.Tensor:
-        """Auto-regressively generate bigram model sequence. Initialize each
-        sequence by sampling from a unigram model."""
-        result = [
-            torch.multinomial(self.unigrams, self.batch, replacement=True).unsqueeze(1)
-        ]
-        for _ in range(self.seq_len - 1):
-            prev = result[-1]
-            result.append(self.sample_bigram(prev))
-        return torch.cat(result, dim=1)
-
-
-def kl_divergence(
-    logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
-) -> torch.Tensor:
-    """Compute the KL divergence between two sets of logits."""
-    logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
-    logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
-
-    return torch.nansum(
-        logit_p.sub(logsumexp_p).exp()
-        * (logit_p.sub(logsumexp_p) - logit_q.sub(logsumexp_q)),
-        dim,
-    )
-
-
-def js_divergence(
-    logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
-) -> torch.Tensor:
-    """Compute the Jensen-Shannon divergence between two sets of logits"""
-    # in place normalize logit vectors with -=
-    # check we're not using them elsewhere .sub_
-    logsumexp_p = logit_p.logsumexp(dim).unsqueeze(dim)
-    logsumexp_q = logit_q.logsumexp(dim).unsqueeze(dim)
-
-    # Mean of P and Q
-    log_m = (
-        torch.stack([logit_p - logsumexp_p, logit_q - logsumexp_q])
-        .sub(math.log(2))
-        .logsumexp(0)
-    )
-
-    kl_p = torch.nansum(
-        logit_p.sub(logsumexp_p).exp() * (logit_p.sub(logsumexp_p).sub(log_m)), dim
-    )
-    kl_q = torch.nansum(
-        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-    )
-    return 0.5 * (kl_p + kl_q)
-
-
-def one_hot_js_divergence(
-    logit_q: torch.Tensor, p_index: torch.Tensor, batch: int, dim: int = -1
-) -> torch.Tensor:
-    logsumexp_q = logit_q.logsumexp(-1, keepdim=True)
-
-    # accumulate log_m (starts in linear space)
-    log_m = logit_q.sub(logsumexp_q).sub(math.log(2)).exp()
-    log_m[torch.arange(batch * 2048), p_index] += 0.5
-    log_m += torch.finfo(torch.float32).eps
-    log_m = log_m.log()
-
-    # p * log(p / m) at p = 1 -> log(p) - log(m) = -log(m)
-    kl_p = -log_m[torch.arange(batch * 2048), p_index]
-    kl_q = torch.nansum(
-        logit_q.sub(logsumexp_q).exp() * (logit_q.sub(logsumexp_q).sub(log_m)), dim
-    )
-    return 0.5 * (kl_p + kl_q)
 
 
 def get_mean_divergences(
@@ -168,16 +34,16 @@ def get_mean_divergences(
     divergences = []
     logits = logits[:, :-1, :d_vocab].flatten(
         0, 1
-    )  # NANs # 0.2 GB * batch (2048 * 50277 * 16)
+    ) 
     sample = tokens[:, 1:].flatten()
     bigram_dists = (
         ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
         + torch.finfo(torch.float32).eps
-    )  # 0.2 GB (2048 * 50277 * 32)
+    )
     divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
     divergences.append(
         one_hot_js_divergence(bigram_dists, sample, batch).mean()
-    )  # / probabilities by 2 and add 5
+    )
     del sample
 
     # divergences.append(kl_divergence(bigram_dists, logits).mean())
@@ -226,7 +92,7 @@ def ngram_model_worker(
 
     os.makedirs(tmp_cache_dir, exist_ok=True)
     torch.cuda.set_device(gpu_id)
-    ngram_model = NgramModel(model_path, d_vocab, batch)
+    ngram_model = NgramModel(model_path, batch)
 
     div_labels = [
         "logit_token_js_div",

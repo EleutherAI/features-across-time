@@ -10,12 +10,12 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import tqdm.auto as tqdm
-from ngram_steps import NgramModel
 from scipy import stats
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
 )
+from scriptutils.ngram_model import NgramModel
 from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba
 from scriptutils.experiment import Experiment, run_experiment_workers
 
@@ -96,7 +96,12 @@ def multi_step_worker(
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
-    ngram_model = NgramModel(ngram_path, batch=experiment.batch_size, seq_len=experiment.seq_len, tokenizer=tokenizer)
+    ngram_model = NgramModel(
+        ngram_path, 
+        batch=experiment.batch_size, 
+        seq_len=experiment.seq_len, 
+        tokenizer=tokenizer
+    )
     # use_encode = not (
     #     isinstance(tokenizer, AutoTokenizer)
     #     and NgramModel.tokenizer.name_or_path == tokenizer.name_or_path

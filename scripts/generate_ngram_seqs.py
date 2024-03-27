@@ -67,6 +67,7 @@ class NgramModel:
         )
         return np.exp(nll.mean())
 
+
     def cross_entropy(self, sample: NDArray):
         rows = np.log(self.prob_matrix[sample])
 

@@ -61,6 +61,16 @@ def main(debug: bool, experiment: Experiment):
     #     lambda x: experiment.steps[x] if x < len(experiment.steps) else experiment.steps[-1]
     # )
 
+    
+    # df['step'] = df['step'].astype(int)
+    df['step'] = pd.to_numeric(df['step'], errors='coerce').fillna(0).astype(int)
+
+
+
+
+
+
+
     # Remove a step or two because the confidence intervals overlap too much
     df = df[df["step"] != 0]
     df = df[df["step"] != 2]
@@ -92,11 +102,11 @@ def main(debug: bool, experiment: Experiment):
 
     fig = make_subplots(
         rows=1,
-        cols=2,
+        cols=1,
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            "Trigram loss over sequence positions",
+            "Trigram loss over sequence positions (Pythia 12B)",
             # "Unigram loss over sequence positions",
             # "Bigram loss over sequence positions",
         ],
@@ -153,25 +163,25 @@ def main(debug: bool, experiment: Experiment):
                     marker=dict(size=5, symbol=marker_series[i]),
                     name=f"{step:,}",
                     line=dict(color=color),
-                    showlegend=idx == 1,
+                    showlegend=idx == 0,
                 ),
                 row=1,
                 col=idx + 1,
             )
 
-        fig.add_shape(
-            type="line",
-            x0=1,
-            y0=entropies[idx],
-            x1=2**11,
-            y1=entropies[idx],
-            line=dict(color="black", width=2, dash="dot"),
-            row=1,
-            col=idx + 1,
-        )
+        # fig.add_shape(
+        #     type="line",
+        #     x0=1,
+        #     y0=entropies[idx],
+        #     x1=2**11,
+        #     y1=entropies[idx],
+        #     line=dict(color="black", width=2, dash="dot"),
+        #     row=1,
+        #     col=idx + 1,
+        # )
 
     fig.update_layout(
-        width=1000,
+        width=600,
         height=400,
         legend=dict(
             x=0.98,
@@ -233,14 +243,14 @@ if __name__ == "__main__":
             eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id
         )
         for model_name, batch_size in [
-            ("pythia-14m", 4),
-            ("pythia-70m", 4),
-            ("pythia-160m", 4),
-            ("pythia-410m", 4),
-            ("pythia-1b", 4),
-            ("pythia-1.4b", 4),
-            ("pythia-2.8b", 4),
-            ("pythia-6.9b", 1),
+            # ("pythia-14m", 4),
+            # ("pythia-70m", 4),
+            # ("pythia-160m", 4),
+            # ("pythia-410m", 4),
+            # ("pythia-1b", 4),
+            # ("pythia-1.4b", 4),
+            # ("pythia-2.8b", 4),
+            # ("pythia-6.9b", 1),
             ("pythia-12b", 1),
         ]
     ]

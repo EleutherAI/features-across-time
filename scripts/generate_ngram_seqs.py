@@ -1,6 +1,8 @@
 import pickle
 import time
 import argparse
+import time
+import math
 
 import numpy as np
 import torch
@@ -10,7 +12,8 @@ from scipy.stats import entropy
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 from tokengrams import MemmapIndex
-import time
+from torch.utils.data import DataLoader
+from datasets import load_from_disk
 
 class NgramModel:
     def __init__(self, bigrams_path: str, token_path: str, token_index_path: str, batch=1, seq_len=2049):
@@ -25,7 +28,7 @@ class NgramModel:
             torch.tensor(bigram_counts).sum(dim=1).cuda()
         )
         
-        self.bigrams = bigram_counts + np.finfo(self.bigrams.dtype).eps
+        self.bigrams = bigram_counts + np.finfo(bigram_counts.dtype).eps
         self.prob_matrix = self.bigrams / self.bigrams.sum(axis=1)[:, None]
         
         self.mmap_index = MemmapIndex(token_path, token_index_path)
@@ -59,6 +62,38 @@ class NgramModel:
         samples = self.mmap_index.batch_sample([], n=n, k=self.seq_len, num_samples=num_samples)
         return np.array(samples)
 
+    def generate_ngram_dists(self, n: int, num_samples: int, vocab_size: int = 50_277) -> None:
+        print("dists")
+        batch = 64
+        num_iters = math.ceil(num_samples / batch)
+        print(num_iters)
+
+        pile_data_loader = DataLoader(load_from_disk("/mnt/ssd-1/lucia/val_tokenized.hf"), batch_size=batch)
+        pile = iter(pile_data_loader)
+
+        mmap = np.memmap(f'{n}-gram-pile-dists.npy', mode='w+', dtype=np.float64, shape=(num_iters * batch * (self.seq_len - 1), vocab_size))
+        print("mmap")
+        for i in tqdm(range(num_iters)):
+            # dists are compared with logits. there are logits for all positions. however there are no logits between chunks
+            ngram_prefixes = []
+            tokens_batch = next(pile)["input_ids"]
+            for row in tokens_batch:
+                ngram_prefixes.extend([row[i:i + (n - 1)].tolist() for i in range(len(row) - (n - 2))])
+
+            print("rust")
+            counts = torch.tensor(self.mmap_index.batch_bincount_next_tokens(ngram_prefixes, vocab_size))[:, :vocab_size]
+            probs = counts / (counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps)
+            probs = probs.log()
+            # 8192 50304
+
+            # 8192 = 4 * (8192 - 1)
+            chunk_len = batch * (self.seq_len - 1)
+            print(batch, chunk_len, self.seq_len, batch * (self.seq_len - 1))
+            print(((i * chunk_len) + chunk_len) - (i * chunk_len))
+            mmap[
+                (i * chunk_len):((i * chunk_len) + chunk_len)
+            ] = np.array(probs, dtype=np.float64)
+
 
     def perplexity(self, sample: NDArray):
         nll = -np.log(
@@ -87,8 +122,11 @@ def conditional_entropy(arr: NDArray):
 
 def bigram_properties(bigrams_path, ngram_model, batch):
     data = np.load('bigram-sequences.npy')
+    entropies = []
     for row in data:
-        ngram_model.cross_entropy(row)
+        entropy = ngram_model.cross_entropy(row)
+        entropies.append(entropy)
+    print(entropies[:5], sum(entropies) / len(entropies))
 
     with open(bigrams_path, "rb") as f:
         arr = pickle.load(f)
@@ -100,6 +138,18 @@ def bigram_properties(bigrams_path, ngram_model, batch):
     #     perplexities.append(perplexity.item())
     # print(np.mean(perplexities)) # entropy = 5.594
 
+
+def trigram_properties(bigrams_path, ngram_model, batch):
+    data = np.load('3-gram-sequences.npy')
+    entropies = []
+    for row in data:
+        entropy = ngram_model.cross_entropy(row)
+        entropies.append(entropy)
+    print(entropies[:5], sum(entropies) / len(entropies))
+
+    # with open(bigrams_path, "rb") as f:
+    #     arr = pickle.load(f)
+    # conditional_entropy(arr)
 
 # one_billion_tokens_path = "/mnt/ssd-1/nora/pile-head.bin"
 # one_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-head.idx"
@@ -119,11 +169,16 @@ def main(n: int, k: int, num_samples: int):
     )  
     print(f"Loaded ngram model, generating {num_samples} {n}-gram sequences of {k} tokens...")
 
-    start = time.time()
-    data = ngram_model.generate_ngrams(n, num_samples)
-    print(time.time() - start)
-    mmap = np.memmap(f"{n}-gram-sequences.npy", mode="w+", dtype=data.dtype, shape=data.shape)
-    mmap[:] = data
+    # print(bigram_properties(bigrams_path, ngram_model, 4))
+    print(trigram_properties(bigrams_path, ngram_model, 4))
+
+    # start = time.time()
+    # data = ngram_model.generate_ngrams(n, num_samples)
+    # print(time.time() - start)
+    # mmap = np.memmap(f"{n}-gram-sequences.npy", mode="w+", dtype=data.dtype, shape=data.shape)
+    # mmap[:] = data
+
+    # ngram_model.generate_ngram_dists(n, num_samples=1024)
 
 
 if __name__ == "__main__":

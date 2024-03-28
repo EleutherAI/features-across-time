@@ -1,20 +1,15 @@
 import argparse
 import os
-import pickle
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import tqdm.auto as tqdm
-from scipy import stats
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 from scriptutils.ngram_model import NgramModel
 from scriptutils.experiment import Experiment
-from scriptutils.load_model import get_auto_model, get_neo_tokenizer
-from ngram_indices_steps import split_by_eod, positional_summary_stats, get_sequence_losses, encode
+from scriptutils.load_model import get_auto_model, get_auto_tokenizer
+from ngram_indices_steps import positional_summary_stats, get_sequence_losses, encode
 
 
 def generate_random(d_vocab, batch, seq_len) -> torch.Tensor:
@@ -29,7 +24,7 @@ def worker(
     tmp_cache_dir = Path(".cache")
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
-    tokenizer = experiment.get_tokenizer()
+    tokenizer = experiment.get_tokenizer(experiment.team, experiment.model_name)
     ngram_model = NgramModel(
         ngram_path, batch=experiment.batch_size, seq_len=experiment.seq_len
     )
@@ -113,10 +108,10 @@ def main(ngram_path: str):
         model_name="Mistral-7B-v0.1",
         batch_size=1,
         seq_len=2049, 
-        steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 143_000], # done: 66_000, 131_000, 
+        steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
         d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
         get_model=get_auto_model, 
-        get_tokenizer=get_neo_tokenizer,
+        get_tokenizer=get_auto_tokenizer,
         eod_index=2 # tokenizer.eos_token_id
     )
 

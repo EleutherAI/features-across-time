@@ -3,12 +3,12 @@ from mamba_ssm import MambaLMHeadModel
 from transformers import AutoTokenizer, MambaForCausalLM, AutoModelForCausalLM, LlamaTokenizer
 
 
-def get_neo_tokenizer():
-    return AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+def get_auto_tokenizer(team: str, model_name: str):
+    return AutoTokenizer.from_pretrained(f"{team}/{model_name}")
 
 
-def get_amber_tokenizer():
-    return LlamaTokenizer.from_pretrained("LLM360/Amber")
+def get_amber_tokenizer(team: str, model_name: str):
+    return LlamaTokenizer.from_pretrained(f"{team}/{model_name}")
 
 
 def get_zyphra_mamba(team: str, model_name: str, step: int | None, cache_dir: str):

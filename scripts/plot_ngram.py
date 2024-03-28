@@ -44,6 +44,7 @@ def hex_to_rgba(hex_color, opacity=0.5):
 def plot_bpb_and_divergences(
     df: pd.DataFrame, image_name: str, debug: bool, model_series: str, qualitative=False
 ):
+    df = df[df['step'] != 0] # Step = 0 gives final step, which we collect elsewhere
     if not debug:
         write_garbage()
 
@@ -82,26 +83,27 @@ def plot_bpb_and_divergences(
         "star",
         "hexagram",
     ]
-    entropies = [2.89, 2.04]
+    entropies = [2.89, 2.04, 2]
 
     # log_spaced_indices = np.unique(np.logspace(0, np.log2(df['index'].max()), base=2, num=20).astype(int))
     # df = df[df['index'].isin(log_spaced_indices)]
 
     fig = make_subplots(
         rows=2,
-        cols=2,
+        cols=3,
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
+            "Trigram sequence loss across time"
         ]
         + [label[1] for label in div_metadata],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["unigram", "bigram"]):
+    for idx, ngram in enumerate(["unigram", "bigram", "3_gram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -160,16 +162,17 @@ def plot_bpb_and_divergences(
                 col=idx + 1,
             )
 
-        fig.add_shape(
-            type="line",
-            x0=1,
-            y0=entropies[idx],
-            x1=143000,
-            y1=entropies[idx],
-            line=dict(color="black", width=2, dash="dot"),
-            row=1,
-            col=idx + 1,
-        )
+        if idx != 2:
+            fig.add_shape(
+                type="line",
+                x0=1,
+                y0=entropies[idx],
+                x1=143000,
+                y1=entropies[idx],
+                line=dict(color="black", width=2, dash="dot"),
+                row=1,
+                col=idx + 1,
+            )
 
     for label, pretty_label, y_range, row, col in div_metadata:
         df[f"top_conf_{label}_bpb"] = df[f"top_conf_{label}"] * bpb_coefficient
@@ -274,32 +277,37 @@ def plot_bpb_and_divergences(
 
 def plot_model_sizes(debug: bool):
     num_samples = 1024
-    model_series="Mamba" # Pythia
+    model_series="Pythia" # "Mamba" 
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
-    # model_metadata = [
-    #     ("pythia-14m", "14M", 8),
-    #     ("pythia-70m", "70M", 8),
-    #     ("pythia-160m", "160M", 8),
-    #     ("pythia-410m", "410M", 8),
-    #     ("pythia-1b", "1B", 8),
-    #     ("pythia-1.4b", "1.4B", 8),
-    #     ("pythia-2.8b", "2.8B", 8),
-    #     ("pythia-6.9b", "6.9B", 8),
-    #     ("pythia-12b", "12B", 8),
-    # ]
     model_metadata = [
-        ("mamba-160m-hf", "160m", 6),
-        ("Mamba-370M", "370M", 7)
+        ("pythia-14m", "14M", 8),
+        ("pythia-70m", "70M", 8),
+        ("pythia-160m", "160M", 8),
+        ("pythia-410m", "410M", 8),
+        ("pythia-1b", "1B", 8),
+        ("pythia-1.4b", "1.4B", 8),
+        ("pythia-2.8b", "2.8B", 8),
+        # ("pythia-6.9b", "6.9B", 8),
+        # ("pythia-12b", "12B", 8),
     ]
+    # model_metadata = [
+    #     ("mamba-160m-hf", "160m", 6),
+    #     ("Mamba-370M", "370M", 7)
+    # ]
     model_dfs = []
     for model_name, pretty_model_name, num_chunks in model_metadata:
         dfs = []
-        for i in range(num_chunks):
-            model_df = pd.read_csv(
-                Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_{i}.csv"
-            )
-            dfs.append(model_df)
+        # for i in range(num_chunks):
+        model_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_[1 2].csv"
+        )
+        dfs.append(model_df)
+
+        trigram_df = pd.read_csv(
+            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
+        )
+        dfs.append(trigram_df)
         model_df = pd.concat(dfs)
 
         # supplementary_kl_div_path = (

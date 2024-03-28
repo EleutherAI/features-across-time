@@ -51,10 +51,10 @@ def run_experiment_workers(
             tmp_cache_path,
             step_indices[i],
         )
-        for i, gpu_id in enumerate(gpu_ids)
+        for i, gpu_id in enumerate(gpu_ids[:len(step_indices)])
     ]
     print(f"Parallelising over {len(step_indices)} GPUs...")
-    with mp.Pool(len(gpu_ids)) as pool:
+    with mp.Pool(len(step_indices)) as pool:
         dfs = pool.starmap(worker, args)
 
     return pd.concat(dfs)

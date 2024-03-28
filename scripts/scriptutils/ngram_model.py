@@ -99,7 +99,22 @@ class NgramModel:
 
 
     def get_ngram_dists(self, tokens: torch.Tensor, n: int) -> torch.Tensor:
-        ngram_prefixes = [tokens[i:i + n - 1].tolist() for i in range(len(tokens) - 1)]
-        counts = torch.tensor(self.mmap_index.batch_bincount_next_tokens(ngram_prefixes, n))
-        probs = counts / (counts.sum(dim=1) + torch.finfo(torch.float64).eps)
+        # ngram_prefixes = [tokens[i:i + n - 1].tolist() for i in range(len(tokens) - 1)]
+        ngram_prefixes = []
+        for row in tokens:
+            ngram_prefixes.extend([row[i:i + (n - 1)].tolist() for i in range(len(row) - (n - 2))])
+
+        # import time
+        # start = time.time()
+        # counts = torch.tensor(self.mmap_index.batch_bincount_next_tokens(ngram_prefixes, self.d_vocab))
+        # print(time.time() - start) # 415s
+        # print(counts.shape, counts.sum(dim=1).shape)
+        
+        # probs = counts / (counts.sum(dim=1).unsqueeze(0) + torch.finfo(torch.float64).eps)
+        # return probs.log()
+
+        counts = torch.tensor(self.mmap_index.batch_bincount_next_tokens(ngram_prefixes, self.d_vocab))[:, :self.d_vocab]
+        print("sampling dists: bincounted")
+        probs = counts / (counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps)
         return probs.log()
+        

@@ -19,6 +19,7 @@ class Experiment:
     get_tokenizer: Callable[[], Any]
     d_vocab: int
     steps: list[int]
+    ngram_orders: list[int]
     eod_index: int | None = None
 
 

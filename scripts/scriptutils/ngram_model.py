@@ -43,7 +43,7 @@ class NgramModel:
             dtype=torch.float32,
             device="cuda",
         )
-        self.bigram_samples = np.load("bigram-sequences.npy")
+        self.bigram_samples = np.load("2-gram-sequences.npy")
 
 
     def generate_unigrams(self) -> torch.Tensor:
@@ -72,15 +72,19 @@ class NgramModel:
         return bigram_dists
     
 
-    def generate_bigrams(self, i: int) -> torch.Tensor:
-        """Auto-regressively generate bigram model sequence. Initialize each
-        sequence by sampling from a unigram model."""
-        batch = self.bigram_samples[
-            i * self.batch : (i * self.batch) + self.batch, :50277
+    def get_ngrams(self, n: int, i: int) -> torch.Tensor:
+        """Fetch a precomputed batch of n-gram sequences"""
+        ngram_samples = np.load(f"{n}-gram-sequences.npy")
+        batch = ngram_samples[
+            i * self.batch : (i * self.batch) + self.batch, :self.d_vocab
         ]
         return torch.tensor(batch, device="cuda").long()
 
 
-    def generate_bigram_strs(self, i: int) -> list[str]:
-        tokens = self.generate_bigrams(i)
+    def get_ngram_strs(self, n: int, i: int) -> list[str]:
+        """Fetch a precomputed batch of n-gram sequences and convert to strs"""
+        if n == 1:
+            return self.generate_unigram_strs()
+        
+        tokens = self.get_ngrams(n, i)
         return [self.tokenizer.decode(row.tolist()) for row in tokens]

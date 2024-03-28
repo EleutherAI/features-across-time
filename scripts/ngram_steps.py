@@ -113,7 +113,7 @@ def ngram_model_worker(
         running_step_bigram_loss_mean = 0.0
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
-            unigram_sample = ngram_model.generate_unigrams().long()
+            unigram_sample = ngram_model.get_ngrams(i, 1).long()
             unigram_logits = model(unigram_sample).logits[:, :, :experiment.d_vocab]
 
             unigram_loss_mean = F.cross_entropy(
@@ -124,7 +124,7 @@ def ngram_model_worker(
             running_step_unigram_loss_mean += unigram_loss_mean / num_iters
             del bigram_sample, bigram_logits
 
-            bigram_sample = ngram_model.generate_bigrams(i).long()
+            bigram_sample = ngram_model.get_ngrams(i, 2).long()
             bigram_logits = model(bigram_sample).logits[:, :, :experiment.d_vocab]
             bigram_loss_mean = F.cross_entropy(
                 bigram_logits[:, :-1].reshape(experiment.batch_size * experiment.seq_len, -1),

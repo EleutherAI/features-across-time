@@ -19,14 +19,13 @@ class NgramModel:
         self.seq_len = seq_len
 
         with open(bigrams_path, "rb") as f:
-            bigram_counts = pickle.load(f)
+            bigram_counts = pickle.load(f).toarray().astype(np.float32)
 
         self.unigrams = (
-            torch.tensor(bigram_counts.toarray().astype(np.float32)).sum(dim=1).cuda()
+            torch.tensor(bigram_counts).sum(dim=1).cuda()
         )
-        self.bigrams = bigram_counts.toarray().astype(np.float32)
-        self.bigrams += np.finfo(self.bigrams.dtype).eps
-
+        
+        self.bigrams = bigram_counts + np.finfo(self.bigrams.dtype).eps
         self.prob_matrix = self.bigrams / self.bigrams.sum(axis=1)[:, None]
         
         self.mmap_index = MemmapIndex(token_path, token_index_path)
@@ -123,7 +122,7 @@ def main(n: int, k: int, num_samples: int):
     start = time.time()
     data = ngram_model.generate_ngrams(n, num_samples)
     print(time.time() - start)
-    np.save(f"{4}-gram-sequences-{num_samples}.npy", data)
+    np.save(f"{n}-gram-sequences.npy", data)
 
 
 if __name__ == "__main__":

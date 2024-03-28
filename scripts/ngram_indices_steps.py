@@ -3,6 +3,7 @@ import math
 import os
 import shutil
 from pathlib import Path
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
@@ -89,8 +90,9 @@ def multi_step_worker(
     ngram_path: str,
     pile_path: str,
     tmp_cache_path: str,
-    steps: list[str]
+    steps: list[str],
 ) -> pd.DataFrame:
+    
     torch.cuda.set_device(gpu_id)
 
     tokenizer = experiment.get_tokenizer()
@@ -113,7 +115,7 @@ def multi_step_worker(
 
     token_indices = []
     step_indices = []
-    labels = ["unigram_loss", "bigram_loss"]  #  "random_loss"
+    labels = [f"{n}-gram_loss" for n in experiment.ngram_orders]  #  "random_loss"
     means = {label: [] for label in labels}
     bottom_conf_intervals = {label: [] for label in labels}
     top_conf_intervals = {label: [] for label in labels}
@@ -122,57 +124,30 @@ def multi_step_worker(
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
         model = experiment.get_model(experiment.team, experiment.model_name, step, tmp_cache_dir)
-
-        step_unigram_losses = []
-        step_bigram_losses = []
-        # step_random_losses = []
-
+        step_losses = defaultdict(list)
         for i in range(num_iters):
-            step_unigram_sample = (
-                encode(ngram_model.generate_unigram_strs(), tokenizer, experiment.seq_len)
-                if use_encode
-                else ngram_model.generate_unigrams()
-            )
-            step_unigram_losses.extend(
-                get_sequence_losses(
-                    model, step_unigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index, experiment.d_vocab
+            for n in experiment.ngram_orders:
+                step_sample = (
+                    encode(ngram_model.get_ngram_strs(n, i), tokenizer, experiment.seq_len)
+                    if use_encode
+                    else ngram_model.get_ngrams(n, i)
                 )
-            )
-            step_bigram_sample = (
-                encode(ngram_model.generate_bigram_strs(i), tokenizer, experiment.seq_len)
-                if use_encode
-                else ngram_model.generate_bigrams(i)
-            )
-            step_bigram_losses.extend(
-                get_sequence_losses(
-                    model, step_bigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index, experiment.d_vocab
-                )
-            )
-            # step_random_sample = torch.randint(
-            #     0, experiment.d_vocab, [experiment.batch_size, experiment.seq_len], device="cuda"
-            # )
-            # step_random_losses.extend(
-            #     get_sequence_losses(
-            #         model, step_random_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index
-            #     )
-            # )
+                step_losses[n].extend(
+                    get_sequence_losses(
+                        model, step_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index, experiment.d_vocab
+                    )
+                )    
             pbar.update(1)
 
         token_indices.extend(list(range(experiment.seq_len - 1)))
         step_indices.extend([int(step)] * (experiment.seq_len - 1))
-        mean_unigram_loss, unigram_conf_intervals = positional_summary_stats(
-            step_unigram_losses, (experiment.seq_len - 1)
-        )
-        means["unigram_loss"].extend(mean_unigram_loss)
-        bottom_conf_intervals["unigram_loss"].extend(unigram_conf_intervals[0])
-        top_conf_intervals["unigram_loss"].extend(unigram_conf_intervals[1])
-
-        mean_bigram_loss, bigram_conf_intervals = positional_summary_stats(
-            step_bigram_losses, (experiment.seq_len - 1)
-        )
-        means["bigram_loss"].extend(mean_bigram_loss)
-        bottom_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[0])
-        top_conf_intervals["bigram_loss"].extend(bigram_conf_intervals[1])
+        for n in experiment.ngram_orders:
+            mean_loss, conf_intervals = positional_summary_stats(
+                step_losses[n], (experiment.seq_len - 1)
+            )
+            means[f"{n}-gram_loss"].extend(mean_loss)
+            bottom_conf_intervals[f"{n}-gram_loss"].extend(conf_intervals[0])
+            top_conf_intervals[f"{n}-gram_loss"].extend(conf_intervals[1])
 
         # mean_random_loss, random_conf_intervals = positional_summary_stats(
         #     step_random_losses, (seq_len - 1)
@@ -198,7 +173,7 @@ def multi_step_worker(
     df.to_csv(
         Path.cwd()
         / "output"
-        / f"{experiment.model_name}_{experiment.num_samples}_steps_{gpu_id}_{steps}.csv",
+        / f"{experiment.model_name}_{experiment.num_samples}_steps_{gpu_id}_{experiment.ngram_orders}_{steps}.csv",
         index=False,
     )
     
@@ -228,7 +203,8 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
         d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
         # roughly log spaced steps + final step
         steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
-        eod_index=get_neo_tokenizer().eos_token_id
+        ngram_orders=[3],
+        eod_index=get_neo_tokenizer().eos_token_id,
     )
 
     df = run_experiment_workers(experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path)

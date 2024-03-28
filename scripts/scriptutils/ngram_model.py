@@ -4,6 +4,7 @@ import numpy as np
 import scipy
 import torch
 from transformers import AutoTokenizer
+from tokengrams import MemmapIndex
 
 
 class NgramModel:
@@ -54,6 +55,10 @@ class NgramModel:
         else:
             self.log_bigrams = None
 
+        forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-40B.idx"
+        forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-40B.bin"
+        self.mmap_index = MemmapIndex(forty_billion_tokens_path, forty_billion_tokens_index_path)
+
 
     def generate_unigrams(self) -> torch.Tensor:
         return torch.multinomial(
@@ -93,5 +98,8 @@ class NgramModel:
         return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
 
-    def get_ngram_dists(self, query: list[int], n: int) -> torch.Tensor:
-        return torch.zeros()
+    def get_ngram_dists(self, tokens: torch.Tensor, n: int) -> torch.Tensor:
+        ngram_prefixes = [tokens[i:i + n - 1].tolist() for i in range(len(tokens) - 1)]
+        counts = torch.tensor(self.mmap_index.batch_bincount_next_tokens(ngram_prefixes, n))
+        probs = counts / (counts.sum(dim=1) + torch.finfo(torch.float64).eps)
+        return probs.log()

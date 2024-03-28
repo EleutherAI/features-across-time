@@ -10,7 +10,7 @@ from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
 from plotly.subplots import make_subplots
 
 from scriptutils.experiment import Experiment
-from scriptutils.load_model import get_neo_tokenizer, get_zyphra_mamba, get_hails_mamba
+from scriptutils.load_model import get_auto_tokenizer, get_zyphra_mamba, get_hails_mamba, get_auto_model
 
 
 def add_steps(df, supplementary_path):
@@ -47,7 +47,7 @@ def main(debug: bool, experiment: Experiment):
         "hexagram",
     ]
 
-    df = pd.read_csv(Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps.csv")
+    df = pd.read_csv(Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps_[3].csv")
     supplementary_path = (
         Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps_additional.csv"
     )
@@ -69,6 +69,7 @@ def main(debug: bool, experiment: Experiment):
     df = df[df["step"] != 128]
     df = df[df["step"] != 512]
     df = df[df["step"] != 2048]
+    df = df[df["step"] != 8000]
     df = df[df["step"] != 20_000]
     df = df[df["step"] != 80_000]
     df = df[df["step"] != 320_000]
@@ -95,14 +96,15 @@ def main(debug: bool, experiment: Experiment):
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            "Unigram loss over sequence positions",
-            "Bigram loss over sequence positions",
+            "Trigram loss over sequence positions",
+            # "Unigram loss over sequence positions",
+            # "Bigram loss over sequence positions",
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.05,
     )
 
-    for idx, ngram in enumerate(["unigram", "bigram"]):
+    for idx, ngram in enumerate(["3-gram"]): # "1-gram", "2-gram", 
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"bottom_conf_{ngram}_bpb"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -202,20 +204,46 @@ def main(debug: bool, experiment: Experiment):
     )
     fig.write_image(image_name, format="pdf")
 
-   
+    #  experiment = Experiment(
+    #     num_samples=1024,
+    #     team="hails", 
+    #     model_name="mamba-160m-hf", 
+    #     batch_size=1,
+    #     seq_len=2049, 
+    #     steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
+    #     d_vocab=50_277,
+    #     get_model=get_hails_mamba, 
+    #     get_tokenizer=get_auto_tokenizer,
+    #     eod_index=0
+    # )  
 if __name__ == "__main__":
-    experiment = Experiment(
-        num_samples=1024,
-        team="hails", 
-        model_name="mamba-160m-hf", 
-        batch_size=1,
-        seq_len=2049, 
-        steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
-        d_vocab=50_277,
-        get_model=get_hails_mamba, 
-        get_tokenizer=get_neo_tokenizer,
-        eod_index=0
-    )
+    experiments = [
+        Experiment(
+            num_samples=1024,
+            batch_size=batch_size, 
+            seq_len=2048, 
+            team="EleutherAI", 
+            model_name=model_name, 
+            get_model=get_auto_model, 
+            get_tokenizer=get_auto_tokenizer,
+            d_vocab=50_277,
+            # roughly log spaced steps + final step
+            steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
+            ngram_orders=[3],
+            eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id
+        )
+        for model_name, batch_size in [
+            ("pythia-14m", 4),
+            ("pythia-70m", 4),
+            ("pythia-160m", 4),
+            ("pythia-410m", 4),
+            ("pythia-1b", 4),
+            ("pythia-1.4b", 4),
+            ("pythia-2.8b", 4),
+            ("pythia-6.9b", 1),
+            ("pythia-12b", 1),
+        ]
+    ]
     # experiment = Experiment(
     #     num_samples=1024,
     #     batch_size=2, 
@@ -229,6 +257,7 @@ if __name__ == "__main__":
     #     steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
     #     eod_index=get_neo_tokenizer().eos_token_id
     # )
-    main(debug=False, experiment=experiment)
+    for experiment in experiments:
+        main(debug=False, experiment=experiment)
 
 

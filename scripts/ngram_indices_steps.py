@@ -17,7 +17,7 @@ from transformers import (
     PreTrainedTokenizer,
 )
 from scriptutils.ngram_model import NgramModel
-from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
+from scriptutils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
 from scriptutils.experiment import Experiment, run_experiment_workers
 
 
@@ -95,7 +95,7 @@ def multi_step_worker(
     
     torch.cuda.set_device(gpu_id)
 
-    tokenizer = experiment.get_tokenizer()
+    tokenizer = experiment.get_tokenizer(experiment.team, experiment.model_name)
     tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
@@ -216,12 +216,12 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
             team="EleutherAI", 
             model_name=model_name, 
             get_model=get_auto_model, 
-            get_tokenizer=get_neo_tokenizer,
+            get_tokenizer=get_auto_tokenizer,
             d_vocab=50_277,
             # roughly log spaced steps + final step
             steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
             ngram_orders=[3],
-            eod_index=get_neo_tokenizer().eos_token_id
+            eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id
         )
         for model_name, batch_size in [
             ("pythia-14m", 8),

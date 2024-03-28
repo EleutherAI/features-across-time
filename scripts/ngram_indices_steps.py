@@ -17,7 +17,7 @@ from transformers import (
     PreTrainedTokenizer,
 )
 from scriptutils.ngram_model import NgramModel
-from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba
+from scriptutils.load_model import get_neo_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
 from scriptutils.experiment import Experiment, run_experiment_workers
 
 
@@ -103,8 +103,10 @@ def multi_step_worker(
         ngram_path, 
         batch=experiment.batch_size, 
         seq_len=experiment.seq_len, 
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        use_bigram_dists=False
     )
+    print("Loaded n-gram model...")
     # use_encode = not (
     #     isinstance(tokenizer, AutoTokenizer)
     #     and NgramModel.tokenizer.name_or_path == tokenizer.name_or_path
@@ -192,28 +194,56 @@ def multi_step_worker(
 #     eod_index=0 # tokenizer.eos_token_id
 # )
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
-    experiment = Experiment(
-        num_samples=1024,
-        batch_size=2, 
-        seq_len=2049, 
-        team="Zyphra", 
-        model_name="Mamba-370M", 
-        get_model=get_zyphra_mamba, 
-        get_tokenizer=get_neo_tokenizer,
-        d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
-        # roughly log spaced steps + final step
-        steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
-        ngram_orders=[3],
-        eod_index=get_neo_tokenizer().eos_token_id,
-    )
-
-    df = run_experiment_workers(experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path)
-    df.to_csv(
-        Path.cwd()
-        / "output"
-        / f"{experiment.model_name}_{experiment.num_samples}_steps.csv",
-        index=False,
-    )
+    # experiment = Experiment(
+    #     num_samples=1024,
+    #     batch_size=2, 
+    #     seq_len=2049, 
+    #     team="Zyphra", 
+    #     model_name="Mamba-370M", 
+    #     get_model=get_zyphra_mamba, 
+    #     get_tokenizer=get_neo_tokenizer,
+    #     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+    #     # roughly log spaced steps + final step
+    #     steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
+    #     ngram_orders=[3],
+    #     eod_index=get_neo_tokenizer().eos_token_id,
+    # )
+    experiments = [
+        Experiment(
+            num_samples=1024,
+            batch_size=batch_size, 
+            seq_len=2048, 
+            team="EleutherAI", 
+            model_name=model_name, 
+            get_model=get_auto_model, 
+            get_tokenizer=get_neo_tokenizer,
+            d_vocab=50_277,
+            # roughly log spaced steps + final step
+            steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
+            ngram_orders=[3],
+            eod_index=get_neo_tokenizer().eos_token_id
+        )
+        for model_name, batch_size in [
+            ("pythia-14m", 8),
+            ("pythia-70m", 8),
+            ("pythia-160m", 4),
+            ("pythia-410m", 4),
+            ("pythia-1b", 4),
+            ("pythia-1.4b", 4),
+            ("pythia-2.8b", 4),
+            ("pythia-6.9b", 2),
+            ("pythia-12b", 1),
+        ]
+    ]
+    
+    for experiment in experiments:
+        df = run_experiment_workers(experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path)
+        df.to_csv(
+            Path.cwd()
+            / "output"
+            / f"{experiment.model_name}_{experiment.num_samples}_steps_{experiment.ngram_orders}.csv",
+            index=False,
+        )
 
 
 if __name__ == "__main__":

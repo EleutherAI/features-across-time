@@ -19,10 +19,6 @@ from transformers import GPTNeoXForCausalLM
 from scripts.scriptutils.ngram_model import NgramModel
 from scriptutils.divergences import one_hot_js_divergence, js_divergence, kl_divergence
 
-def batch_generator(dataset, batch_size):
-    for i in range(0, len(dataset), batch_size):
-        yield dataset[i : i + batch_size]["input_ids"]
-
 
 def get_mean_divergences(
     tokens: torch.Tensor,

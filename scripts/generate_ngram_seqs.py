@@ -122,7 +122,8 @@ def main(n: int, k: int, num_samples: int):
     start = time.time()
     data = ngram_model.generate_ngrams(n, num_samples)
     print(time.time() - start)
-    np.save(f"{n}-gram-sequences.npy", data)
+    mmap = np.memmap(f"{n}-gram-sequences.npy", mode="w+", dtype=data.dtype, shape=data.shape)
+    mmap[:] = data
 
 
 if __name__ == "__main__":

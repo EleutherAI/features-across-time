@@ -32,23 +32,23 @@ def get_mean_divergences(
         0, 1
     ) 
     sample = tokens[:, 1:].flatten()
-    bigram_dists = (
-        ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
+    bigram_log_dists = (
+        ngram_model.get_bigram_prob(tokens[:, :-1].flatten()).log()
         + torch.finfo(torch.float32).eps
     )
     divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
     divergences.append(
-        one_hot_js_divergence(bigram_dists, sample, batch).mean()
+        one_hot_js_divergence(bigram_log_dists, sample, batch).mean()
     )
     del sample
 
     # divergences.append(kl_divergence(bigram_dists, logits).mean())
     divergences.append(
-        js_divergence(bigram_dists, logits).mean()
+        js_divergence(bigram_log_dists, logits).mean()
     )  # uses extra 32-25 GB - mem bottleneck. unigrams might too
-    del bigram_dists
+    del bigram_log_dists
 
-    unigram_dist = ngram_model.unigrams + torch.finfo(torch.float32).eps
+    unigram_dist = ngram_model.unigram_probs + torch.finfo(torch.float32).eps
     # divergences.append(kl_divergence(unigram_dist, logits).mean())
     divergences.append(
         js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean()

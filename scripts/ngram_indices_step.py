@@ -49,16 +49,16 @@ def worker(
     random_losses = []
     for i in tqdm.tqdm(range(experiment.num_samples // experiment.batch_size)):
         bigram_sample = (
-            encode(ngram_model.get_ngram_strs(2, i), tokenizer, experiment.seq_len)
+            encode(ngram_model.get_ngram_str(2, i), tokenizer, experiment.seq_len)
             if use_encode
-            else ngram_model.get_ngrams(2, i)
+            else ngram_model.get_ngram_seq(2, i)
         )
         bigram_losses.extend(get_sequence_losses(model, bigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index))
         
         unigram_sample = (
-            encode(ngram_model.get_ngram_strs(1, i), tokenizer, experiment.seq_len)
+            encode(ngram_model.get_ngram_str(1, i), tokenizer, experiment.seq_len)
             if use_encode
-            else ngram_model.get_ngrams(1, i)
+            else ngram_model.get_ngram_seq(1, i)
         )
         unigram_losses.extend(
             get_sequence_losses(model, unigram_sample, experiment.batch_size, experiment.seq_len, experiment.eod_index)

@@ -65,13 +65,7 @@ def main(debug: bool, experiment: Experiment):
     # df['step'] = df['step'].astype(int)
     df['step'] = pd.to_numeric(df['step'], errors='coerce').fillna(0).astype(int)
 
-
-
-
-
-
-
-    # Remove a step or two because the confidence intervals overlap too much
+    # Remove several steps because their lines' confidence intervals overlap
     df = df[df["step"] != 0]
     df = df[df["step"] != 2]
     df = df[df["step"] != 8]

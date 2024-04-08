@@ -103,8 +103,7 @@ def multi_step_worker(
         ngram_path, 
         batch=experiment.batch_size, 
         seq_len=experiment.seq_len, 
-        tokenizer=tokenizer,
-        use_bigram_dists=False
+        tokenizer=tokenizer
     )
     print("Loaded n-gram model...")
     # use_encode = not (
@@ -130,9 +129,9 @@ def multi_step_worker(
         for i in range(num_iters):
             for n in experiment.ngram_orders:
                 step_sample = (
-                    encode(ngram_model.get_ngram_strs(n, i), tokenizer, experiment.seq_len)
+                    encode(ngram_model.get_ngram_str(n, i), tokenizer, experiment.seq_len)
                     if use_encode
-                    else ngram_model.get_ngrams(n, i)
+                    else ngram_model.get_ngram_seq(n, i)
                 )
                 step_losses[n].extend(
                     get_sequence_losses(

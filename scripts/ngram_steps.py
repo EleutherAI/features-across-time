@@ -45,7 +45,7 @@ def get_mean_divergences(
     #     + torch.finfo(torch.float32).eps
     # )
     ngram_dists = {
-        3: ngram_model.get_ngram_dists(tokens, 3).cuda()
+        3: ngram_model.get_ngram_prob(tokens, 3).log().cuda()
     }
     print(ngram_dists[3].shape)
     # print("sampling dists: new")
@@ -125,7 +125,7 @@ def ngram_model_worker(
         # running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
             for n_index, n in enumerate(experiment.ngram_orders):
-                ngram_sample = ngram_model.get_ngrams(n, i).long()
+                ngram_sample = ngram_model.get_ngram_seq(n, i).long()
                 ngram_logits = model(ngram_sample).logits[:, :, :experiment.d_vocab]
 
                 ngram_loss_mean = F.cross_entropy(

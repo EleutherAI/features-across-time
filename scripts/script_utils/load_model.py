@@ -1,7 +1,8 @@
 from mamba_model import MambaModel
 from mamba_ssm import MambaLMHeadModel
 from transformers import AutoTokenizer, MambaForCausalLM, AutoModelForCausalLM, LlamaTokenizer
-import torch
+
+from script_utils.custom_neo import GPTNeoXForCausalLMWithBias
 
 def get_auto_tokenizer(team: str, model_name: str):
     return AutoTokenizer.from_pretrained(f"{team}/{model_name}")
@@ -38,4 +39,12 @@ def get_auto_model(team: str, model_name: str, step: int | None, cache_dir: str,
     if step:
         kwargs["revision"] = f"step{step}"
         
-    return AutoModelForCausalLM.from_pretrained(f"{team}/{model_name}", **kwargs).cuda()
+    return AutoModelForCausalLM.from_pretrained(f"{team}/{model_name}", **kwargs).cuda()    
+
+
+def get_gpt_neo_with_bias(team: str, model_name: str, step: int | None, cache_dir: str):
+    kwargs = {"torch_dtype": "auto", "cache_dir": cache_dir, "ignore_mismatched_sizes": True}
+    if step:
+        kwargs["revision"] = f"step{step}"
+
+    return GPTNeoXForCausalLMWithBias.from_pretrained(f"{team}/{model_name}", **kwargs).cuda()    

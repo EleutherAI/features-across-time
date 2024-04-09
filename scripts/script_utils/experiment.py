@@ -2,14 +2,14 @@ from dataclasses import dataclass
 from typing import Callable, Any
 import math
 
-
-import pandas as pd
 import torch
+import pandas as pd
 import torch.multiprocessing as mp
 
 
 @dataclass
 class Experiment:
+    """Any configuration required by any worker."""
     num_samples: int
     batch_size: int
     seq_len: int
@@ -20,10 +20,18 @@ class Experiment:
     d_vocab: int
     steps: list[int]
     ngram_orders: list[int]
+    
+    epochs: int | None
+    lr: float | None
+    gamma: float | None
+    seed: int | None
+    test_batch_size: int | None
+    save_model: bool = False
+
     eod_index: int | None = None
 
 
-def run_experiment_workers(
+def run_checkpoint_experiment_workers(
     experiment: Experiment, 
     worker: Callable[[int, Experiment, str, str, str, list[str]], pd.DataFrame],
     ngram_path: str, 

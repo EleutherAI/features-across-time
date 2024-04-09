@@ -6,9 +6,9 @@ import pandas as pd
 import torch
 import tqdm.auto as tqdm
 from transformers import AutoTokenizer
-from scriptutils.ngram_model import NgramModel
-from scriptutils.experiment import Experiment
-from scriptutils.load_model import get_auto_model, get_auto_tokenizer
+from script_utils.ngram_model import NgramModel
+from script_utils.experiment import Experiment
+from script_utils.load_model import get_auto_model, get_auto_tokenizer
 from ngram_indices_steps import positional_summary_stats, get_sequence_losses, encode
 
 

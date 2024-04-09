@@ -16,8 +16,8 @@ from scipy import stats
 from torch.utils.data import DataLoader
 from transformers import GPTNeoXForCausalLM
 
-from scripts.scriptutils.ngram_model import NgramModel
-from scriptutils.divergences import one_hot_js_divergence, js_divergence, kl_divergence
+from script_utils.ngram_model import NgramModel
+from script_utils.divergences import one_hot_js_divergence, js_divergence, kl_divergence
 
 
 def get_mean_divergences(

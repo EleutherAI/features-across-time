@@ -9,8 +9,8 @@ import plotly.graph_objects as go
 from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
 from plotly.subplots import make_subplots
 
-from scriptutils.experiment import Experiment
-from scriptutils.load_model import get_auto_tokenizer, get_zyphra_mamba, get_hails_mamba, get_auto_model
+from script_utils.experiment import Experiment
+from script_utils.load_model import get_auto_tokenizer, get_zyphra_mamba, get_hails_mamba, get_auto_model
 
 
 def add_steps(df, supplementary_path):

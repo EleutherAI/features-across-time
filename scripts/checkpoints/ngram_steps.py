@@ -14,10 +14,10 @@ import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
-from scriptutils.ngram_model import NgramModel
-from scriptutils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
-from scriptutils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
-from scriptutils.experiment import Experiment, run_experiment_workers
+from script_utils.ngram_model import NgramModel
+from script_utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
+from script_utils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
+from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
 
 
 def get_mean_divergences(
@@ -255,7 +255,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     ]
 
     for experiment in experiments:
-        df = run_experiment_workers(
+        df = run_checkpoint_experiment_workers(
             experiment, 
             ngram_model_worker, 
             ngram_path, 

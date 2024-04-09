@@ -16,9 +16,9 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
 )
-from scriptutils.ngram_model import NgramModel
-from scriptutils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
-from scriptutils.experiment import Experiment, run_experiment_workers
+from script_utils.ngram_model import NgramModel
+from script_utils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
+from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
 
 
 def encode(input: list[str], encoder: PreTrainedTokenizer, seq_len: int):
@@ -236,7 +236,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     ]
     
     for experiment in experiments:
-        df = run_experiment_workers(experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path)
+        df = run_checkpoint_experiment_workers(experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path)
         df.to_csv(
             Path.cwd()
             / "output"

@@ -15,7 +15,8 @@ from tokengrams import MemmapIndex
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
 
-class NgramModel:
+
+class NgramSeqModel:
     def __init__(self, bigrams_path: str, token_path: str, token_index_path: str, batch=1, seq_len=2049):
         self.tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
         self.batch = batch
@@ -32,6 +33,7 @@ class NgramModel:
         self.prob_matrix = self.bigrams / self.bigrams.sum(axis=1)[:, None]
         
         self.mmap_index = MemmapIndex(token_path, token_index_path)
+
 
     def generate_bigrams(self, num_samples: int) -> torch.Tensor:
         """Auto-regressively generate bigram model sequence. Initialize each
@@ -52,6 +54,7 @@ class NgramModel:
             data[i : i + self.batch, :] = torch.cat(result, dim=1).numpy()
         return data
 
+
     def generate_ngrams(self, n: int, num_samples: int) -> NDArray:
         """Auto-regressively generate trigram model sequence. Initialize each
         sequence by sampling from a unigram and then a bigram model.
@@ -61,6 +64,7 @@ class NgramModel:
         """
         samples = self.mmap_index.batch_sample([], n=n, k=self.seq_len, num_samples=num_samples)
         return np.array(samples)
+
 
     def generate_ngram_dists(self, n: int, num_samples: int, vocab_size: int = 50_277) -> None:
         print("dists")
@@ -81,7 +85,7 @@ class NgramModel:
                 ngram_prefixes.extend([row[i:i + (n - 1)].tolist() for i in range(len(row) - (n - 2))])
 
             print("rust")
-            counts = torch.tensor(self.mmap_index.batch_bincount_next_tokens(ngram_prefixes, vocab_size))[:, :vocab_size]
+            counts = torch.tensor(self.mmap_index.batch_next_token_counts(ngram_prefixes, vocab_size))[:, :vocab_size]
             probs = counts / (counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps)
             probs = probs.log()
             # 8192 50304
@@ -140,7 +144,7 @@ def bigram_properties(bigrams_path, ngram_model, batch):
 
 
 def trigram_properties(bigrams_path, ngram_model, batch):
-    data = np.load('3-gram-sequences.npy')
+    data = np.memmap('3-gram-sequences.npy', mode='r+')
     entropies = []
     for row in data:
         entropy = ngram_model.cross_entropy(row)
@@ -155,25 +159,35 @@ def trigram_properties(bigrams_path, ngram_model, batch):
 # one_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-head.idx"
 # ten_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-10G.idx"
 # ten_billion_tokens_path = "/mnt/ssd-1/nora/pile-10G.bin"
+
+
 def main(n: int, k: int, num_samples: int):
-    bigrams_path = "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl"
+    bigram_paths = {
+        "pile": "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl"
+    }
+
     forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-40B.idx"
     forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-40B.bin"
+    one_billion_tokens_path = "/mnt/ssd-1/nora/pile-head.bin"
+    one_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-head.idx"
     
-    ngram_model = NgramModel(
-        bigrams_path, 
-        forty_billion_tokens_path, 
-        forty_billion_tokens_index_path, 
+    ngram_model = NgramSeqModel(
+        bigram_paths['pile'], 
+        one_billion_tokens_path, 
+        one_billion_tokens_index_path, 
         4, 
         k
-    )  
+    )
     print(f"Loaded ngram model, generating {num_samples} {n}-gram sequences of {k} tokens...")
 
     # print(bigram_properties(bigrams_path, ngram_model, 4))
-    print(trigram_properties(bigrams_path, ngram_model, 4))
+    # print(trigram_properties(bigrams_path, ngram_model, 4))
 
     # start = time.time()
-    # data = ngram_model.generate_ngrams(n, num_samples)
+    # data = np.memmap('3-gram-sequences.npy', mode='r+')
+    
+    data = ngram_model.generate_ngrams(n, 2)
+    print(data[:5])
     # print(time.time() - start)
     # mmap = np.memmap(f"{n}-gram-sequences.npy", mode="w+", dtype=data.dtype, shape=data.shape)
     # mmap[:] = data

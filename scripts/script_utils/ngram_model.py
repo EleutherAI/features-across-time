@@ -62,23 +62,6 @@ class NgramModel:
         return torch.multinomial(
             self.unigram_probs, self.batch_size * self.seq_len, replacement=True
         ).reshape(self.batch_size, self.seq_len)
-
-
-    def get_bigram_prob(self, prev: torch.Tensor) -> torch.Tensor:
-        """Non-ideal behaviour with flattened tensors where the end of once batch and the start of the next 
-        forms a bigram - should be extended to accept a batch dimension"""
-        starts = self.bigram_probs.crow_indices()[prev]
-        ends = self.bigram_probs.crow_indices()[prev + 1]
-
-        # 0 padding to batch rows with variable numbers of non-zero elements
-        bigram_dists = torch.zeros(
-            (len(prev), self.d_vocab), dtype=torch.float32, device="cuda"
-        )
-        for i in range(len(prev)):
-            filled_col_indices = self.bigram_probs.col_indices()[starts[i] : ends[i]]
-            filled_col_values = self.bigram_probs.values()[starts[i] : ends[i]]
-            bigram_dists[i][filled_col_indices] = filled_col_values
-        return bigram_dists
     
 
     def get_ngram_seq(self, n: int, i: int) -> torch.Tensor:
@@ -98,11 +81,31 @@ class NgramModel:
         return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
 
+    def get_bigram_prob(self, prev: torch.Tensor) -> torch.Tensor:
+        """Non-ideal behaviour with flattened tensors where the end of once batch and the start of the next 
+        forms a bigram - should be extended to accept a batch dimension"""
+        starts = self.bigram_probs.crow_indices()[prev]
+        ends = self.bigram_probs.crow_indices()[prev + 1]
+
+        # 0 padding to batch rows with variable numbers of non-zero elements
+        bigram_dists = torch.zeros(
+            (len(prev), self.d_vocab), dtype=torch.float32, device="cuda"
+        )
+        for i in range(len(prev)):
+            filled_col_indices = self.bigram_probs.col_indices()[starts[i] : ends[i]]
+            filled_col_values = self.bigram_probs.values()[starts[i] : ends[i]]
+            bigram_dists[i][filled_col_indices] = filled_col_values
+        return bigram_dists
+
+
     def get_ngram_prob(self, tokens: torch.Tensor, n: int) -> torch.Tensor:
         if n == 1:
             return self.unigram_probs
         if n == 2:
-            return self.get_bigram_prob(tokens)
+            if len(tokens.shape) == 1:
+                return self.get_bigram_prob(tokens)
+            else:
+                return sum(self.get_bigram_prob(row) for row in tokens)
         
         ngram_prefixes = []
         for row in tokens:

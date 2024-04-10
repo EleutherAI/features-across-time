@@ -16,11 +16,9 @@ from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from script_utils.ngram_model import NgramModel
 from script_utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
-from script_utils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
+from script_utils.load_model import get_auto_tokenizer, get_auto_model
 from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
 import pandas as pd
-
-
 
 
 def get_mean_divergences(
@@ -67,8 +65,8 @@ def get_confidence_intervals(
 def finetuned_stats_worker(
     gpu_id: int,
     experiment: Experiment,
-    model_path: str,
-    pile_path: str,
+    bigrams_path: str,
+    dataset_path: str,
     tmp_cache_path: str,
     steps: list[int]
 ) -> pd.DataFrame:
@@ -80,7 +78,7 @@ def finetuned_stats_worker(
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
-    ngram_model = NgramModel(model_path, experiment.batch_size)
+    ngram_model = NgramModel(bigrams_path, experiment.batch_size)
     print("Loaded n-gram model...")
 
     ngram_means = defaultdict(list)
@@ -97,9 +95,9 @@ def finetuned_stats_worker(
 
     num_iters = math.ceil(experiment.num_samples / experiment.batch_size)
     pbar = tqdm.tqdm(total=len(steps) * num_iters, position=gpu_id)
-    pile_data_loader = DataLoader(load_from_disk(pile_path), batch_size=experiment.batch_size)
+    data_loader = DataLoader(load_from_disk(dataset_path), batch_size=experiment.batch_size)
     for step in steps:
-        pile = iter(pile_data_loader)
+        data = iter(data_loader)
         model = experiment.get_model(experiment.team, experiment.model_name, step, tmp_cache_dir)
 
         running_step_ngram_loss_means = [0.0] * len(experiment.ngram_orders)
@@ -116,10 +114,10 @@ def finetuned_stats_worker(
                 ).item()
                 running_step_ngram_loss_means[n_index] += ngram_loss_mean / num_iters
 
-            sample = next(pile)["input_ids"].cuda().to(torch.int32)
+            sample = next(data)["input_ids"].cuda().to(torch.int32)
 
             logits = model(sample).logits[:, :, :experiment.d_vocab]
-            divergences, _ = get_mean_divergences( # ngram_dists, 
+            divergences, _ = get_mean_divergences(
                 sample, logits, ngram_model, experiment.batch_size, experiment.d_vocab, experiment.ngram_orders
             )
             running_step_div_means += (divergences / num_iters).cpu()
@@ -179,7 +177,8 @@ def finetuned_stats_worker(
     return df
 
 
-def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
+def main(ngram_path: str, dataset_path: str, tmp_cache_path: str):
+    # Spanish data
     experiments = [
         Experiment(
             num_samples=1024,
@@ -195,10 +194,10 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
             eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id
         )
         for model_name, batch_size in [
-            ("pythia-14m", 4),
+            # ("pythia-14m", 4),
             # ("pythia-70m", 4),
             # ("pythia-160m", 4),
-            # ("pythia-410m", 4),
+            ("pythia-410m", 4),
             # ("pythia-1b", 4),
             # ("pythia-1.4b", 4),
             # ("pythia-2.8b", 4),
@@ -212,7 +211,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
             experiment, 
             finetuned_stats_worker, 
             ngram_path, 
-            pile_path, 
+            dataset_path, 
             tmp_cache_path
         )
     
@@ -233,12 +232,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ngram_path",
         default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
-        help="Path to pickled sparse scipy array of bigram counts over the Pile",
+        help="Path to pickled sparse scipy array of bigram counts for a data distribution",
     )
     parser.add_argument(
-        "--pile_path",
-        default="/mnt/ssd-1/lucia/val_tokenized.hf",
-        help="Path to Pile validation data",
+        "--data_path",
+        default="/mnt/ssd-1/lucia/es_tokenized.hf",
+        help="Path to validation data",
     )
     parser.add_argument(
         "--tmp_cache_path",
@@ -246,4 +245,4 @@ if __name__ == "__main__":
         help="Path to cache (repeatedly cleared to free disk space)",
     )
     args = parser.parse_args()
-    main(args.ngram_path, args.pile_path, args.tmp_cache_path)
+    main(args.ngram_path, args.data_path, args.tmp_cache_path)

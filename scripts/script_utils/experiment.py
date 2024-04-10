@@ -6,6 +6,8 @@ import torch
 import pandas as pd
 import torch.multiprocessing as mp
 
+from transformers import TrainingArguments
+
 
 @dataclass
 class Experiment:
@@ -20,14 +22,8 @@ class Experiment:
     d_vocab: int
     steps: list[int]
     ngram_orders: list[int]
-    
-    epochs: int | None
-    lr: float | None
-    gamma: float | None
-    seed: int | None
-    test_batch_size: int | None
-    save_model: bool = False
 
+    training_arguments: TrainingArguments | None    
     eod_index: int | None = None
 
 

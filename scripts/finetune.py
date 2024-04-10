@@ -40,18 +40,26 @@ def train(args, model, rank, world_size, train_loader, optimizer, epoch, sampler
     if sampler:
         sampler.set_epoch(epoch)
 
-    # pbar = tqdm.tqdm(total=len(data), position=args.gpu_id)
     for batch_idx, data in tqdm(enumerate(train_loader)):
         input = data['input_ids'][:, :-1]
         #     tokenizer = experiment.get_tokenizer("EleutherAI", "gpt-neox-20b")
-        #     print(tokenizer.decode(input[0]))
+        #     print(tokenizer.decode(input[0])) # Produces legible text
         target = data['input_ids'][:, 1:]
         input, target = input.to(rank), target.to(rank)
         optimizer.zero_grad()
+
+        test_logits = model(input).logits
+        test_loss = F.cross_entropy(test_logits.view(-1, test_logits.size(-1)), target.view(-1), reduction="none")
+        print("mean", test_loss.mean())
+        print("sum", test_loss.sum())
+
         loss = model(input, labels=target).loss
+        print("regular loss", loss)
+        
         if batch_idx % 100 == 0: print(loss)
         loss.backward()
         optimizer.step()
+        break
         ddp_loss[0] += loss.item()
         ddp_loss[1] += len(input.flatten())
 
@@ -66,18 +74,11 @@ def test(model, rank, world_size, test_loader):
     with torch.no_grad():
         for data in test_loader:
             input = data['input_ids'][:, :-1]
-            print(input.shape)
             target = data['input_ids'][:, 1:]
             input, target = input.to(rank), target.to(rank)
 
-            test_logits = model(input).logits
-            test_loss = F.cross_entropy(test_logits.view(-1, test_logits.size(-1)), target.flatten(-1))
-            print("mean", test_loss.mean())
-            print("sum", test_loss.sum())
-
             output = model(input, labels=target)
             pred = output.logits.argmax(dim=2, keepdim=True)
-            print(output.loss.item())
             ddp_loss[0] += output.loss.item()
             ddp_loss[1] += pred.eq(target.view_as(pred)).sum().item()
             ddp_loss[2] += len(input.view(-1))
@@ -104,9 +105,9 @@ def finetune(
 
     # train_dataset = load_dataset("allenai/c4", "es", split='train')
     # train_dataset = load_dataset("NeelNanda/pile-10k", split='train')
-    train_dataset = load_from_disk("/home/lucia/features-across-time/scripts/es_tokenized.hf")
+    train_dataset = load_from_disk("/mnt/ssd-1/lucia/es_tokenized.hf")
     # test_dataset = load_dataset("allenai/c4", "es", split='validation')
-    test_dataset = load_from_disk("/home/lucia/features-across-time/scripts/es_tokenized.hf")
+    test_dataset = load_from_disk("/mnt/ssd-1/lucia/es_tokenized.hf")
     
     train_sampler = DistributedSampler(train_dataset, rank=rank, num_replicas=world_size)
     test_sampler = DistributedSampler(test_dataset, rank=rank, num_replicas=world_size)
@@ -171,7 +172,7 @@ def main(tmp_cache_path: str):
             eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id,
             epochs=1,
             lr=1e-4,
-            gamma=1,
+            gamma=0.1,
             seed=1,
             test_batch_size=4,
             save_model=True,

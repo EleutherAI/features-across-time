@@ -7,63 +7,73 @@ from numpy.random import uniform
 init_printing(use_latex=True)
 
 class DuryDistribution:
+    """p = exp(-a - b * x)"""
     get_mean: Callable[[float], float]
-    get_inverse_cdf: Callable[[float], float]
-
+    get_quantile: Callable[[float], float]
 
     def __init__(self):
-        def derive_mean_eq():
-            """Documentation for the mean_fn used to sample 
-            from the distribution"""
+        a, x, mu = symbols('a x mu')
+        b = symbols('b', nonzero=True)
+        p = exp(-a - b * x)
 
-            a, x, mu = symbols('a x mu')
-            b = symbols('b', nonzero=True)
-            p = exp(-a - b * x)
-
-            # get eq for a : int(p) = 1 in terms of b
+        def derive_mean_function() -> Callable:
             total = integrate(p, (x, 0, 1))
             a_expr = solve(total - 1, a)[0]
-
-            # get eq for p_mean in [0, 1] in terms of b
             mu = integrate(x * p.subs(a, a_expr), (x, 0, 1)).simplify()
-            mu = mu.simplify()
-            
-            # result:
-            # -(b - exp(b) + 1)/(b*(exp(b) - 1)) 
             return lambdify(b, mu, modules="numpy")
 
-
-        def derive_inverse_cdf():
-            x, a, b, u = symbols('x a b u', real=True, positive=True)
-            p = exp(-a - b * x) 
-
+        def derive_quantile_function() -> Callable:
             cdf = integrate(p, (x, 0, x))
             inverse_cdf = solve(Eq(cdf, u), x)[0]
-            
             return lambdify((a, b, u), inverse_cdf, modules='numpy')
 
-
-        self.get_mean = derive_mean_eq()
-        self.get_inverse_cdf = derive_inverse_cdf()
+        self.get_mean = derive_mean_function()
+        self.get_quantile = derive_quantile_function()
 
 
     def get_sampler(self, mu: float):
-        """Sample from a maximum entropy distribution subject to 
-        hypercube and mean constraints.
+        """Sampler for a maximum entropy distribution subject to hypercube and mean constraints.
         Input: mu; mean of distribution.
         """
         b = newton(lambda b: self.get_mean(b) - mu, 0.1)
         a = -b + math.log((exp(b) - 1) / b)
+        return lambda: self.get_quantile(a, b, uniform(0, 1))
 
-        def cdf_sampler():
-            u = uniform(0, 1)
-            return self.get_inverse_cdf(a, b, u)
-        
-        return cdf_sampler
+
+dd = DuryDistribution()
+sampler = dd.get_sampler(0.5001)
+sampler()
+
+# class DuryDistributionTorch:
+#     """p = exp(-a - b * x)"""
+#     get_mean: Callable[[float], float]
+#     get_quantile: Callable[[float], float]
+
+#     def __init__(self):
+#         a, x, mu = symbols('a x mu')
+#         b = symbols('b', nonzero=True)
+#         p = exp(-a - b * x)
+
+#         def derive_mean_function() -> Callable:
+#             total = integrate(p, (x, 0, 1))
+#             a_expr = solve(total - 1, a)[0]
+#             mu = integrate(x * p.subs(a, a_expr), (x, 0, 1)).simplify()
+#             return lambdify(b, mu, modules="numpy")
+
+#         def derive_quantile_function() -> Callable:
+#             cdf = integrate(p, (x, 0, x))
+#             inverse_cdf = solve(Eq(cdf, u), x)[0]
+#             return lambdify((a, b, u), inverse_cdf, modules='numpy')
+
+#         self.get_mean = derive_mean_function()
+#         self.get_quantile = derive_quantile_function()
+
+
+#     def get_sampler(self, mu: float):
+#         """Sampler for a maximum entropy distribution subject to hypercube and mean constraints.
+#         Input: mu; mean of distribution.
+#         """
+#         b = newton(lambda b: self.get_mean(b) - mu, 0.1)
+#         a = -b + math.log((exp(b) - 1) / b)
+#         return lambda: self.get_quantile(a, b, uniform(0, 1))
     
-
-# dist = DuryDistribution()
-# mu = 0.50001
-# sampler = dist.get_sampler(mu)
-# print(sampler())
-# print(sampler())

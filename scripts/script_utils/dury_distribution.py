@@ -43,5 +43,5 @@ class DuryDistribution:
     
     def sample(self, num_samples: int):
         '''Generate num_samples samples for each mu'''
-        u = torch.rand((num_samples, self.a.shape[0]), device=self.device)
+        u = torch.rand((num_samples, *self.a.shape), device=self.device)
         return (-1 / ((self.b * u) * self.a.exp() - 1)).log() / self.b.unsqueeze(0)

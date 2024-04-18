@@ -19,7 +19,7 @@ class DuryDistribution:
         inverse_cdf = solve(Eq(cdf, u), x)[0]
         return lambdify((a, b, u), inverse_cdf)
     """
-    def __init__(self, device: str, mu: torch.Tensor):
+    def __init__(self, mu: torch.Tensor, device: str):
         """Sampler for a maximum entropy distribution subject to hypercube and mean constraints.
         mu: mean of distribution."""
         def get_mu(b: torch.Tensor) -> torch.Tensor:
@@ -42,5 +42,6 @@ class DuryDistribution:
     
     
     def sample(self, num_samples: int):
-        u = torch.rand((num_samples), device=self.device)
-        return (-1 / (self.b * u * self.a.exp() - 1)).log() / self.b
+        '''Generate num_samples samples for each mu'''
+        u = torch.rand((num_samples, self.a.shape[0]), device=self.device)
+        return (-1 / ((self.b * u) * self.a.exp() - 1)).log() / self.b.unsqueeze(0)

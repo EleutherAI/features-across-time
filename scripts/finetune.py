@@ -1,11 +1,10 @@
 import argparse
 
 import torch
-import torch.multiprocessing as mp
 
 from dataclasses import dataclass
 
-from datasets import load_from_disk
+from datasets import load_from_disk, load_dataset
 from transformers import (
     Trainer, 
     TrainingArguments, 
@@ -45,8 +44,6 @@ class LogSpacedCheckpoint(TrainerCallback):
 
 
 def main(tmp_cache_path: str):
-    mp.set_start_method("spawn")
-
     experiments = [
         Experiment(
             team="EleutherAI", 
@@ -55,19 +52,14 @@ def main(tmp_cache_path: str):
             get_tokenizer=get_auto_tokenizer,
             batch_size = 2,
             training_arguments=TrainingArguments(
-                output_dir="/mnt/ssd-1/david/",
+                output_dir="/mnt/ssd-1/lucia/",
                 per_device_train_batch_size=batch_size,
                 per_device_eval_batch_size=4,
                 num_train_epochs=1,
                 evaluation_strategy="epoch",
                 save_strategy="no",
-                fsdp=["shard_grad_op", "auto_wrap"],
-                fsdp_config={
-                    "min_num_params": int(1e8)
-                },
                 seed=1,
-                dataloader_num_workers=2,
-                ddp_backend="nccl"
+                dataloader_num_workers=2
             ),
             num_samples=1024,
             seq_len=2048, 
@@ -98,10 +90,9 @@ def main(tmp_cache_path: str):
         print(f"Parallelising over {len(gpu_ids)} GPUs...")
 
         # train_dataset = load_dataset("allenai/c4", "es", split='train')
-        # train_dataset = load_dataset("NeelNanda/pile-10k", split='train')
-        train_dataset = load_from_disk("/mnt/ssd-1/lucia/es_tokenized.hf")
         # test_dataset = load_dataset("allenai/c4", "es", split='validation')
-        test_dataset = load_from_disk("/mnt/ssd-1/lucia/es_tokenized.hf")
+        train_dataset = load_from_disk("/mnt/ssd-1/lucia/es_1b_full_tokenized.hf")
+        test_dataset = load_from_disk("/mnt/ssd-1/lucia/es_1b_full_tokenized.hf")
 
         train_dataset = train_dataset.with_transform(encode)
         test_dataset = test_dataset.with_transform(encode)
@@ -117,8 +108,10 @@ def main(tmp_cache_path: str):
                         eval_dataset=test_dataset)
 
         trainer.add_callback(LogSpacedCheckpoint())
-        train_result = trainer.train()
+        trainer.train()
 
+
+# Run with `accelerate launch <script_name>.py`
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter

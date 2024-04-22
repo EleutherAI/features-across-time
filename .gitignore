@@ -1,6 +1,7 @@
 editor-cache/
 runs/
 wandb/
+tmp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

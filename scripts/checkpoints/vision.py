@@ -1,8 +1,3 @@
-
-# Do optimal transport between class A and B
-# TODO do we need data for transporting each class to each other class?
-# There's no reason not to if it runs quickly.
-# But start with transporting each data to a random other class then update if it's fastimport os
 import os
 import random
 from argparse import ArgumentParser

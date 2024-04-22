@@ -50,9 +50,9 @@ def main(tmp_cache_path: str):
             model_name=model_name, 
             get_model=get_auto_model, 
             get_tokenizer=get_auto_tokenizer,
-            batch_size = 2,
+            batch_size=batch_size,
             training_arguments=TrainingArguments(
-                output_dir="/mnt/ssd-1/lucia/",
+                output_dir="/mnt/ssd-1/lucia/160m-es",
                 per_device_train_batch_size=batch_size,
                 per_device_eval_batch_size=4,
                 num_train_epochs=1,
@@ -71,7 +71,7 @@ def main(tmp_cache_path: str):
         for model_name, batch_size in [
             # ("pythia-14m", 4),
             # ("pythia-70m", 4),
-            ("pythia-160m", 2),
+            ("pythia-160m", 4),
             # ("pythia-410m", 4),
             # ("pythia-1b", 4),
             # ("pythia-1.4b", 4),

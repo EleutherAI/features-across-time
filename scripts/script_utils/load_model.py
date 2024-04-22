@@ -48,3 +48,13 @@ def get_gpt_neo_with_bias(team: str, model_name: str, step: int | None, cache_di
         kwargs["revision"] = f"step{step}"
 
     return GPTNeoXForCausalLMWithBias.from_pretrained(f"{team}/{model_name}", **kwargs).cuda()    
+
+
+def get_es_finetune(team: str, model_name: str, step: int | None, cache_dir: str):
+    assert model_name == "pythia-160m" and team == "EleutherAI", "Spanish finetune of requested model not available locally"
+
+    kwargs = {"torch_dtype": "auto", "cache_dir": cache_dir}
+    if step:
+        kwargs["revision"] = f"step{step}"
+        
+    return AutoModelForCausalLM.from_pretrained(f"/mnt/ssd-1/lucia/es-160m/checkpoint-{step}", **kwargs).cuda()    

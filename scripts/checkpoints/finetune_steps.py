@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from script_utils.ngram_model import NgramModel
 from script_utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
-from script_utils.load_model import get_auto_tokenizer, get_auto_model
+from script_utils.load_model import get_auto_tokenizer, get_es_finetune
 from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
 import pandas as pd
 
@@ -178,7 +178,6 @@ def finetuned_stats_worker(
 
 
 def main(ngram_path: str, dataset_path: str, tmp_cache_path: str):
-    # Spanish data
     experiments = [
         Experiment(
             num_samples=1024,
@@ -186,7 +185,7 @@ def main(ngram_path: str, dataset_path: str, tmp_cache_path: str):
             seq_len=2048, 
             team="EleutherAI", 
             model_name=model_name, 
-            get_model=get_auto_model, 
+            get_model=get_es_finetune, 
             get_tokenizer=get_auto_tokenizer,
             d_vocab=50_277,
             steps=[],
@@ -231,7 +230,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
+        default="/mnt/ssd-1/lucia/es/es-1b-counts.bin",
         help="Path to pickled sparse scipy array of bigram counts for a data distribution",
     )
     parser.add_argument(

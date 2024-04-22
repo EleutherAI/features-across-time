@@ -1,7 +1,8 @@
 import torch
+from torch import Tensor
 
 class DuryDistribution:
-    """Sample from p = exp(-a - b * x)
+    """Sample from p = exp(-a - b * x) in range [0, 1]
     
     # Derivations for helper equations
     a, x, mu, u = symbols('a x mu u')
@@ -19,10 +20,10 @@ class DuryDistribution:
         inverse_cdf = solve(Eq(cdf, u), x)[0]
         return lambdify((a, b, u), inverse_cdf)
     """
-    def __init__(self, mu: torch.Tensor, device: str):
+    def __init__(self, mu: Tensor, device: str):
         """Sampler for a maximum entropy distribution subject to hypercube and mean constraints.
         mu: mean of distribution."""
-        def get_mu(b: torch.Tensor) -> torch.Tensor:
+        def get_mu(b: Tensor) -> Tensor:
             return -(b - b.exp() + 1)/(b * (b.exp() - 1))
 
         def newton(f, x0, tol=1.48e-8, max_iter=50):

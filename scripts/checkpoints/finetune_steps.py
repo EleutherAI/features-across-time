@@ -173,7 +173,6 @@ def finetuned_stats_worker(
         / f"means_ngrams_model_{experiment.model_name}_{experiment.num_samples}_{gpu_id}.csv",
         index=False,
     )
-    # TODO broken
     return df
 
 

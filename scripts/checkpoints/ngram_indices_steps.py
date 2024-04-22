@@ -17,7 +17,7 @@ from transformers import (
     PreTrainedTokenizer,
 )
 from script_utils.ngram_model import NgramModel
-from script_utils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
+from script_utils.load_model import get_auto_tokenizer, get_auto_model
 from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
 
 

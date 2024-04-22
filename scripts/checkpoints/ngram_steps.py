@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from script_utils.ngram_model import NgramModel
 from script_utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
-from script_utils.load_model import get_auto_tokenizer, get_black_mamba, get_hails_mamba, get_zyphra_mamba, get_auto_model
+from script_utils.load_model import get_auto_tokenizer, get_auto_model
 from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
 
 

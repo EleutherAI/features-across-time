@@ -1,4 +1,3 @@
-breakpoint()
 import random
 from random import choices
 from collections import defaultdict
@@ -104,14 +103,13 @@ def build_from_dataset(dataset: str, num_class_samples: int, seed: int):
     class_data = defaultdict(list)
     i = 0
     for item in tqdm(test):
-        class_data[item["label"]].append(item["pixel_values"])
+        class_data[item["label"].item()].append(item["pixel_values"])
         i += 1
-    print(i)
     
     # Calculate class mus
     mus = []
     for label in class_data.keys():
-        class_data[label] = torch.stack([torch.tensor(np.array(img)) for img in class_data[label]])
+        class_data[label] = torch.stack(class_data[label])
 
         mu = class_data[label].float().mean(dim=0)
         mus.append(mu)
@@ -126,7 +124,6 @@ def build_from_dataset(dataset: str, num_class_samples: int, seed: int):
         shift_classes = choices([c for c in classes if c != label], k=len(data))
         target_mus = torch.stack([mus[shift_class] for shift_class in shift_classes])
         
-        print(target_mus.shape, data.shape)
         shifted_samples.append(bounded_shift(data, target_mus, bounds=(0, 1)))
         original_labels.extend([label] * len(data))
         shifted_labels.extend(shift_classes)

@@ -14,7 +14,7 @@ def add_kl_data(df, supplementary_path):
     if os.path.exists(supplementary_path):
         print("supplementary data detected, merging...")
         supplementary_kl_div_df = pd.read_csv(supplementary_path)
-        for label in ["unigram_logit_kl_div", "bigram_logit_kl_div"]:
+        for label in ["1-gram_logit_kl_div", "2-gram_logit_kl_div"]:
             df[f"mean_{label}"] = supplementary_kl_div_df[f"mean_{label}"]
             df[f"bottom_conf_{label}"] = supplementary_kl_div_df[f"bottom_conf_{label}"]
             df[f"top_conf_{label}"] = supplementary_kl_div_df[f"top_conf_{label}"]
@@ -53,14 +53,14 @@ def plot_bpb_and_divergences(
 
     div_metadata = [
         (
-            "unigram_logit_kl_div",
+            "1-gram_logit_kl_div",
             f"D<sub>KL</sub>(unigram model || {model_series}) across time",
             [0, 7],
             2,
             2,
         ),
         (
-            "bigram_logit_kl_div",
+            "2-gram_logit_kl_div",
             f"D<sub>KL</sub>(bigram model || {model_series}) across time",
             [0, 7],
             2,
@@ -96,14 +96,15 @@ def plot_bpb_and_divergences(
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
-            "Trigram sequence loss across time"
+            "KL divergence(learned bigrams | dataset bigrams)"
+            # "Trigram sequence loss across time"
         ]
         + [label[1] for label in div_metadata],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["unigram", "bigram", "3_gram"]):
+    for idx, ngram in enumerate(["1_gram", "2_gram"]): # "3_gram"
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -281,15 +282,21 @@ def plot_model_sizes(debug: bool):
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     model_metadata = [
-        ("pythia-14m", "14M", 8),
-        ("pythia-70m", "70M", 8),
-        ("pythia-160m", "160M", 8),
-        ("pythia-410m", "410M", 8),
-        ("pythia-1b", "1B", 8),
-        ("pythia-1.4b", "1.4B", 8),
-        ("pythia-2.8b", "2.8B", 8),
+        # ("pythia-14m", "14M", 8),
+        # ("pythia-70m", "70M", 8),
+        # ("pythia-160m", "160M", 8),
+        # ("pythia-410m", "410M", 8),
+        # ("pythia-1b", "1B", 8),
+        # ("pythia-1.4b", "1.4B", 8),
+        # ("pythia-2.8b", "2.8B", 8),
         # ("pythia-6.9b", "6.9B", 8),
         # ("pythia-12b", "12B", 8),
+        ("finetune_pythia-14m", "14M", 8),
+        ("finetune_pythia-70m", "70M", 8),
+        ("finetune_pythia-160m", "160M", 8),
+        ("finetune_pythia-410m", "410M", 8),
+        ("finetune_pythia-1b", "1B", 8),
+        ("finetune_pythia-1.4b", "1.4B", 8),
     ]
     # model_metadata = [
     #     ("mamba-160m-hf", "160m", 6),
@@ -300,15 +307,15 @@ def plot_model_sizes(debug: bool):
         dfs = []
         # for i in range(num_chunks):
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_[1 2].csv"
+            Path.cwd() / "output" / f"{model_name}_{num_samples}_[1, 2].csv"
         )
         dfs.append(model_df)
 
-        trigram_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
-        )
-        dfs.append(trigram_df)
-        model_df = pd.concat(dfs)
+        # trigram_df = pd.read_csv(
+        #     Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
+        # )
+        # dfs.append(trigram_df)
+        # model_df = pd.concat(dfs)
 
         # supplementary_kl_div_path = (
         #     Path.cwd()

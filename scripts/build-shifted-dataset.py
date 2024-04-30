@@ -1,7 +1,6 @@
 import random
 from random import choices
 from collections import defaultdict
-import os
 
 import numpy as np
 import torch
@@ -24,14 +23,14 @@ def infer_columns(feats: Features) -> tuple[str, str]:
 
 
 def bounded_shift(
-    x: Tensor, target: Tensor, bounds=(0., 1.), max_iter: int = 1000
+    x: Tensor, target: Tensor, bounds=(0., 1.), max_iter: int = 10_000
 ):
     """Shift the elements of `x` s.t. their mean is `target` while keeping them within `bounds`."""
-
     # Initial centroid
     mu = x.mean(dim=0)
+    print("start", (mu - target).mean(), x.shape, target.shape, mu.shape) # each data point has a target mu, but there's only one mu
 
-    for i in range(max_iter):
+    for i in tqdm(range(max_iter)):
         x = x - (mu - target)
         x.clamp_(*bounds)
 
@@ -39,7 +38,8 @@ def bounded_shift(
         if torch.allclose(mu, target):
             print(f"Converged in {i} iterations")
             break
-    
+
+    print("Mean distance from target mean: ", (mu - target).mean())
     return x
 
 
@@ -114,61 +114,68 @@ def build_from_dataset(dataset: str, num_class_samples: int, seed: int):
         mu = class_data[label].float().mean(dim=0)
         mus.append(mu)
 
-    classes = list(range(len(original_labels)))
+    # classes = list(range(len(original_labels)))
 
     # Mean shifted natural samples
-    shifted_samples = []
-    original_labels = []
-    shifted_labels = []
-    for label, data in tqdm(class_data.items()):
-        shift_classes = choices([c for c in classes if c != label], k=len(data))
-        target_mus = torch.stack([mus[shift_class] for shift_class in shift_classes])
+    # shifted_samples = []
+    # original_labels = []
+    # for label, data in tqdm(class_data.items()):
+    #     shift_classes = choices([c for c in classes if c != label], k=len(data))
+    #     target_mus = torch.stack([mus[shift_class] for shift_class in shift_classes])
         
-        shifted_samples.append(bounded_shift(data, target_mus, bounds=(0, 1)))
-        original_labels.extend([label] * len(data))
-        shifted_labels.extend(shift_classes)
+    #     shifted_samples.append(bounded_shift(data, target_mus, bounds=(0, 1)))
+    #     original_labels.extend([label] * len(data))
     
-    data_dict = {
-        'pixel_values': torch.cat(shifted_samples),
-        'label': original_labels,
-        # 'shifted_label': shifted_labels
-    }
-    Dataset.from_dict(data_dict).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset}')
+    # data_dict = {
+    #     'pixel_values': torch.cat(shifted_samples),
+    #     'label': torch.tensor(original_labels)
+    # }
+    # Dataset.from_dict(data_dict).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset}.hf')
 
     # Mean shifted maximum entropy samples
     shifted_samples = []
     original_labels = []
-    shifted_labels = []
     for label in tqdm(class_data.keys()):
-        shift_classes = choices([c for c in classes if c != label], k=num_class_samples)
-        target_mus = torch.stack([mus[shift_class] for shift_class in shift_classes])
-
         mu = mus[label]
-        dd = DuryDistribution(mu, "cuda")
-        samples = dd.sample(num_class_samples).cpu()
- 
-        shifted_sample_batch = bounded_shift(samples, target_mus, bounds=(0., 1.))
-        shifted_samples.append(shifted_sample_batch)
+        print("mu", mu.isnan().sum())
+        dd = DuryDistribution(mu.cpu().numpy(), start=0.1)
+        samples = dd.sample(num_class_samples)
 
-        original_labels.extend([label] * num_class_samples)
-        shifted_labels.extend(shift_classes)
+        # resample until there's no nans
+        mask = np.logical_or(np.isnan(samples), np.isinf(samples))
+        i = 0
+        while mask.sum() > 0:
+            i += 1
+            print("i", i, mask.sum())
+            dd = DuryDistribution(mu.cpu().numpy(), start=random.uniform(0, 1))
+            resample = dd.sample(num_class_samples)
+            samples[mask] = resample[mask]
+            mask = np.logical_or(np.isnan(samples), np.isinf(samples))
+        
+        print("samples", np.sum(np.isinf(samples)), samples.min(), samples.max(), samples.mean())
+        samples = torch.tensor(samples, dtype=torch.float)
+        for i, mu in enumerate(mus):
+            sample = samples[
+                i * (len(samples) // len(mus)):
+                i * (len(samples) // len(mus)) + len(samples) // len(mus)
+            ]
+            shifted_sample_batch = bounded_shift(sample, mu, bounds=(0., 1.))
+            print("shifted_sample_batch", shifted_sample_batch.isnan().sum())
+            shifted_samples.append(shifted_sample_batch)
+            original_labels.extend([label] * len(sample))
 
-        # Can convert to images if we need consistency with the original datasests
-        # img_bytes = io.BytesIO()
-        # for sample in shifted_samples:
-        #     pil_img = ToPILImage()(sample.permute(2, 0, 1))
-        #     pil_img.save(img_bytes, format='PNG')
-        #     shifted_samples.append(img_bytes.getvalue())
-
-    data_dict = {
-        'pixel_values': torch.cat(shifted_samples),
-        'label': original_labels,
-        # 'shifted_label': shifted_labels
-    }
-    Dataset.from_dict(data_dict).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset}')
+            # Save it every time so I can at least get some data if it crashes
+            data_dict = {
+                'pixel_values': torch.cat(shifted_samples),
+                'label': torch.tensor(original_labels),
+            }
+            Dataset.from_dict(data_dict).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/1-partial-max-entropy-{dataset}.hf')
+        data_dict = {
+            'pixel_values': torch.cat(shifted_samples),
+            'label': torch.tensor(original_labels),
+        }
+        Dataset.from_dict(data_dict).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/1-max-entropy-{dataset}.hf')
 
 
 if __name__ == "__main__":
-    # Path('tmp').mkdir(exist_ok=True)
     main()
-    # Test over checkpoints in vision.py

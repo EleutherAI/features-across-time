@@ -1,21 +1,18 @@
 import os
 import random
 from argparse import ArgumentParser
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+
+from tqdm import tqdm
 import safetensors
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms as T
 import torchvision.transforms.functional as TF
-from concept_erasure import QuadraticEditor, QuadraticFitter
-# from concept_erasure.quantile import QuantileNormalizer
-from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset, load_from_disk
+from datasets import ClassLabel, DatasetDict, Features, Image, load_dataset, load_from_disk
 from torch import Tensor, nn
 from transformers.modeling_outputs import ModelOutput
-
+from torch.utils.data import DataLoader
 
 def load_state_dict_with_modified_keys(model, state_dict_path):
     loaded_state_dict = safetensors.torch.load_file(state_dict_path)
@@ -68,7 +65,7 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
     # Infer columns and class labels
     img_col, label_col = infer_columns(ds["train"].features)
     labels = ds["train"].features[label_col].names
-    print(f"Classes in '{dataset_str}': {labels}")
+    # print(f"Classes in '{dataset_str}': {labels}")
 
     # Convert to RGB so we don't have to think about it
     ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
@@ -76,11 +73,11 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
     # Infer the image size from the first image
     example = ds["train"][0][img_col]
     c, (h, w) = len(example.mode), example.size
-    print(f"Image size: {h} x {w}")
+    # print(f"Image size: {h} x {w}")
 
     def preprocess(batch):
         return {
-            "pixel_values": [TF.to_tensor(x) for x in batch[img_col]],
+            "pixel_values": [TF.to_tensor(x) * 255 for x in batch[img_col]],
             "label": torch.tensor(batch[label_col]),
         }
 
@@ -90,26 +87,31 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
         nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
         val = nontrain["train"].with_transform(preprocess)
 
-    max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}')
+    max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/partial-max-entropy-{dataset_str}')
+    max_entropy_shifted_ds.set_format('torch', columns=['pixel_values','label'])
     natural_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}')
+    natural_shifted_ds.set_format('torch', columns=['pixel_values','label'])
 
     checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
     data_dicts = []
-    for net in nets:
-        for checkpoint in checkpoints:
-            data_dicts.append(
-                run_model(
-                    max_entropy_shifted_ds,
-                    natural_shifted_ds,
-                    dataset_str,
-                    net,
-                    h,
-                    len(labels),
-                    seed,
-                    models_path,
-                    checkpoint
+
+    with tqdm(total=len(nets) * len(checkpoints)) as pbar:
+        for net in nets:
+            for checkpoint in checkpoints:
+                data_dicts.extend(
+                    run_model(
+                        max_entropy_shifted_ds,
+                        natural_shifted_ds,
+                        dataset_str,
+                        net,
+                        h,
+                        len(labels),
+                        seed,
+                        models_path,
+                        checkpoint
+                    )
                 )
-            )
+                pbar.update(1)
     
     return data_dicts
 
@@ -125,7 +127,8 @@ def run_model(
     seed: int,
     models_path: str,
     checkpoint: int
-):  
+) -> list[dict]:  
+    device = "cuda"
     model_path = os.path.join(models_path, ds_str)
     assert os.path.isdir(model_path)
 
@@ -138,14 +141,13 @@ def run_model(
         for name in os.listdir(model_path) 
         if os.path.isdir(os.path.join(model_path, name)) and name.startswith(net_str)
     ]
-    
-    print(f"Model sizes in {net_str}: {model_archs}")
 
+    # print(f"Model sizes in {net_str}: {model_archs}")
+    data = []
     for model_arch, model_path in zip(model_archs, model_paths):
         match model_arch.partition("-"):
             case ("convnext", _, arch):
                 from transformers import ConvNextV2Config, ConvNextV2ForImageClassification
-
                 match arch:
                     case "atto" | "":  # default
                         depths = [2, 2, 6, 2]
@@ -175,7 +177,7 @@ def run_model(
                     # low-resolution images like CIFAR-10
                     patch_size=1,
                 )
-                model = ConvNextV2ForImageClassification.from_pretrained(model_path)
+                model = ConvNextV2ForImageClassification.from_pretrained(model_path).to(device)
             case ("regnet", _, arch):
                 from torchvision.models import (
                     regnet_y_1_6gf,
@@ -199,7 +201,7 @@ def run_model(
 
                 net.stem[0].stride = (1, 1)  # type: ignore
                 load_state_dict_with_modified_keys(net, os.path.join(model_path, 'model.safetensors'))
-                model = HfWrapper(net)
+                model = HfWrapper(net).to(device)
 
             case ("swin", _, arch):
                 from torchvision.models.swin_transformer import (
@@ -240,32 +242,38 @@ def run_model(
                     downsample_layer=PatchMergingV2,
                 )
                 load_state_dict_with_modified_keys(swin, os.path.join(model_path, 'model.safetensors'))
-                model = HfWrapper(swin)
+                model = HfWrapper(swin).to(device)
             case _:
                 raise ValueError(f"Unknown model {model_arch}")
 
         # Collect data on model
-        data = {
+        arch_data = {
             "step": checkpoint,
             "ds": ds_str,
-            "net": net_str
+            "net": net_str,
+            "arch": model_arch
         }
         
         running_mean_loss = 0.0
-        for item in max_entropy_shifted_ds:
-            loss = model(item["pixel_values"], item["label"])
-            running_mean_loss += (loss / len(max_entropy_shifted_ds))
-
-        data["maxent_shifted_loss"] = running_mean_loss
-        running_mean_loss = 0.0
-        for item in natural_shifted_ds:
-            loss = model(item["pixel_values"], item["label"])
-            running_mean_loss += (loss / len(natural_shifted_ds))
-
-        data["ds_shifted_loss"] = running_mean_loss
-
-        return data
+        dataloader = DataLoader(max_entropy_shifted_ds, batch_size=512)
+        for batch in dataloader:
+            pixel_values = batch["pixel_values"].to(device) * 255
+            print(pixel_values.isnan().sum())
+            loss = model(pixel_values, batch["label"].to(device)).loss.item()
+            running_mean_loss += (loss / len(dataloader))
+        arch_data["maxent_shifted_loss"] = running_mean_loss
         
+        # running_mean_loss = 0.0
+        # dataloader = DataLoader(natural_shifted_ds, batch_size=512)
+        # for batch in dataloader:
+        #     loss = model(batch["pixel_values"].to(device) * 255, batch["label"].to(device)).loss.item()
+        #     running_mean_loss += (loss / len(natural_shifted_ds))
+
+        # arch_data["ds_shifted_loss"] = running_mean_loss
+        # data.append(arch_data)
+
+    return data
+
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
@@ -288,7 +296,9 @@ if __name__ == "__main__":
         data_dicts.extend(
             run_dataset(dataset, args.nets, args.seed, args.checkpoints)
         )
+        df = pd.DataFrame(data_dicts)
+        df.to_csv(f'vision-maxent-{dataset}.csv', index=False)
     
     df = pd.DataFrame(data_dicts)
-    df.to_csv('vision.csv', index=False)
+    df.to_csv('vision-maxent.csv', index=False)
 

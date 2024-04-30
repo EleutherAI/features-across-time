@@ -23,7 +23,7 @@ class Experiment:
     steps: list[int]
     ngram_orders: list[int]
 
-    training_arguments: TrainingArguments | None    
+    training_arguments: TrainingArguments | None = None   
     eod_index: int | None = None
 
 
@@ -38,6 +38,7 @@ def run_checkpoint_experiment_workers(
     if not gpu_ids:
         gpu_ids = list(range(torch.cuda.device_count()))
 
+    print(gpu_ids, experiment.steps)
     max_steps_per_chunk = math.ceil(len(experiment.steps) / len(gpu_ids))
     
     step_indices = [

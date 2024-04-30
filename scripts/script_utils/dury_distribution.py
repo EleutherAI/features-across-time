@@ -1,5 +1,6 @@
-import torch
-from torch import Tensor
+from numpy.typing import NDArray
+from scipy.optimize import newton
+import numpy as np
 
 class DuryDistribution:
     """Sample from p = exp(-a - b * x) in range [0, 1]
@@ -20,29 +21,34 @@ class DuryDistribution:
         inverse_cdf = solve(Eq(cdf, u), x)[0]
         return lambdify((a, b, u), inverse_cdf)
     """
-    def __init__(self, mu: Tensor, device: str):
+    def __init__(self, mu: NDArray, start: int = 0.1):
         """Sampler for a maximum entropy distribution subject to hypercube and mean constraints.
         mu: mean of distribution."""
-        def get_mu(b: Tensor) -> Tensor:
-            return -(b - b.exp() + 1)/(b * (b.exp() - 1))
+        def get_mu(b: NDArray) -> NDArray:
+            num = -(b - np.expm1(b))
+            denom = b * (np.expm1(b) + np.finfo(b.dtype).eps)
+            return num / denom
 
-        def newton(f, x0, tol=1.48e-8, max_iter=50):
-            x = x0.clone().detach().requires_grad_(True)
-            for _ in range(max_iter):
-                y = f(x)
-                if torch.max(torch.abs(y)) < tol:
-                    break
-                grad_y, = torch.autograd.grad(y, x, grad_outputs=torch.ones_like(y, device=self.device), create_graph=True)
-                x = x - y / grad_y
-                x.detach_().requires_grad_()
-            return x
-
-        self.device = device
-        self.b = newton(lambda b: get_mu(b) - mu.to(self.device), torch.full_like(mu, 0.1, device=self.device))
-        self.a = -self.b + ((self.b.exp() - 1) / self.b).log()
+        def get_mu_deriv(b: NDArray) -> NDArray:
+            num = b ** 2 * np.expm1(b) + 1 - np.expm1(2*b) + 2*np.expm1(b) + 2
+            denom = b ** 2 * (np.expm1(2*b) + 1 - 2*np.expm1(b) + 2)
+            return num / denom
+        
+        self.b, converged, _ = newton(lambda b: get_mu(b) - mu, np.full_like(mu, start), fprime=get_mu_deriv, maxiter=200_000, full_output=True)
+        self.a = -self.b + np.log(np.expm1(self.b) / self.b)
+        
+        print(f"Number of failures to converge: {converged.size - np.sum(converged)} / {converged.size}")
     
     
     def sample(self, num_samples: int):
         '''Generate num_samples samples for each mu'''
-        u = torch.rand((num_samples, *self.a.shape), device=self.device)
-        return (-1 / ((self.b * u) * self.a.exp() - 1)).log() / self.b.unsqueeze(0)
+        u = np.random.rand(num_samples, *self.a.shape)
+        samples = np.log(-1 / ((self.b * u) * np.exp(self.a) - 1)) / self.b[None, :]
+        return samples
+
+
+if __name__ == "__main__":
+    mu = np.random.rand(3, 5, 6)
+    dd = DuryDistribution(mu)
+    samples = dd.sample(30)
+    print(np.sum(np.isnan(samples)), "nan samples")

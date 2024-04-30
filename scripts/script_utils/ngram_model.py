@@ -14,16 +14,18 @@ class NgramModel:
             batch=1, 
             seq_len=2049, 
             tokenizer=None,
+            device="cuda"
         ):
         self.tokenizer = tokenizer if tokenizer is not None else AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
         self.d_vocab = len(self.tokenizer.vocab)
         self.batch_size = batch
         self.seq_len = seq_len
+        self.device = device
 
         with open(path, "rb") as f:
             bigram_counts = pickle.load(f).toarray().astype(np.float32)
 
-        self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).cuda()
+        self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
 
         # Conver to sparse CSR tensor in a dumb way
@@ -50,12 +52,12 @@ class NgramModel:
             sparse_csr_bigram_probs.indices.astype(np.int64),
             sparse_csr_bigram_probs.data.astype(np.float32),
             dtype=torch.float32,
-            device="cuda",
+            device=self.device,
         )
 
-        forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-40B.idx"
-        forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-40B.bin"
-        self.mmap_index = MemmapIndex(forty_billion_tokens_path, forty_billion_tokens_index_path)
+        # forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-40B.idx"
+        # forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-40B.bin"
+        # self.mmap_index = MemmapIndex(forty_billion_tokens_path, forty_billion_tokens_index_path)
 
 
     def generate_unigram_seq(self) -> torch.Tensor:
@@ -66,12 +68,12 @@ class NgramModel:
 
     def get_ngram_seq(self, n: int, i: int) -> torch.Tensor:
         """Fetch a precomputed batch of n-gram sequences"""
-        ngram_samples = np.memmap(f"{n}-gram-sequences.npy", dtype=np.int64, mode='r', shape=(1024, self.seq_len))
+        ngram_samples = np.memmap(f"es-{n}-gram-sequences.npy", dtype=np.int64, mode='r', shape=(1024, self.seq_len))
         batch = ngram_samples[
             i * self.batch_size:(i * self.batch_size) + self.batch_size
         ]
 
-        return torch.tensor(batch, device="cuda").long()
+        return torch.tensor(batch, device=self.device).long()
 
 
     def get_ngram_str(self, n: int, i: int) -> list[str]:
@@ -89,7 +91,7 @@ class NgramModel:
 
         # 0 padding to batch rows with variable numbers of non-zero elements
         bigram_dists = torch.zeros(
-            (len(prev), self.d_vocab), dtype=torch.float32, device="cuda"
+            (len(prev), self.d_vocab), dtype=torch.float32, device=self.device
         )
         for i in range(len(prev)):
             filled_col_indices = self.bigram_probs.col_indices()[starts[i] : ends[i]]
@@ -100,12 +102,12 @@ class NgramModel:
 
     def get_ngram_prob(self, tokens: torch.Tensor, n: int) -> torch.Tensor:
         if n == 1:
-            return self.unigram_probs
+            return self.unigram_probs.expand((*tokens.shape, -1)) + torch.finfo(torch.float32).eps
         if n == 2:
             if len(tokens.shape) == 1:
-                return self.get_bigram_prob(tokens)
+                return self.get_bigram_prob(tokens) + torch.finfo(torch.float32).eps
             else:
-                return sum(self.get_bigram_prob(row) for row in tokens)
+                return torch.stack([self.get_bigram_prob(row) for row in tokens]) + torch.finfo(torch.float32).eps
         
         ngram_prefixes = []
         for row in tokens:
@@ -113,4 +115,3 @@ class NgramModel:
 
         counts = torch.tensor(self.mmap_index.batch_next_token_counts(ngram_prefixes, self.d_vocab))[:, :self.d_vocab]
         return counts / (counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps)
-        

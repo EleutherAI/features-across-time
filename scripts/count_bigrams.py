@@ -18,6 +18,6 @@ def count_bigrams(tokens_path: Path, counts_path: Path):
 
 
 if __name__ == "__main__":
-    tokens_path = Path("/mnt/ssd-1/lucia/es/es-1b-counts.bin") # "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
+    tokens_path = Path("/mnt/ssd-1/lucia/es_1b_full.bin") # "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     counts_path = Path("/mnt/ssd-1/lucia/es/es-bigrams.pkl")
     count_bigrams(tokens_path, counts_path)

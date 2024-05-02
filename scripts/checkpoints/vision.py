@@ -58,40 +58,47 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
 
     # Allow specifying load_dataset("svhn", "cropped_digits") as "svhn:cropped_digits"
     # We don't use the slash because it's a valid character in a dataset name
-    path, _, name = dataset_str.partition(":")
-    ds = load_dataset(path, name or None)
-    assert isinstance(ds, DatasetDict)
+    # path, _, name = dataset_str.partition(":")
+    # ds = load_dataset(path, name or None)
+    # assert isinstance(ds, DatasetDict)
 
-    # Infer columns and class labels
-    img_col, label_col = infer_columns(ds["train"].features)
-    labels = ds["train"].features[label_col].names
-    # print(f"Classes in '{dataset_str}': {labels}")
+    # # Infer columns and class labels
+    # img_col, label_col = infer_columns(ds["train"].features)
+    # labels = ds["train"].features[label_col].names
+    # # print(f"Classes in '{dataset_str}': {labels}")
 
-    # Convert to RGB so we don't have to think about it
-    ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
+    # # Convert to RGB so we don't have to think about it
+    # ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
 
-    # Infer the image size from the first image
-    example = ds["train"][0][img_col]
-    c, (h, w) = len(example.mode), example.size
+    # # Infer the image size from the first image
+    # example = ds["train"][0][img_col]
+    # c, (h, w) = len(example.mode), example.size
+    # print(len(labels), h)
     # print(f"Image size: {h} x {w}")
 
-    def preprocess(batch):
-        return {
-            "pixel_values": [TF.to_tensor(x) * 255 for x in batch[img_col]],
-            "label": torch.tensor(batch[label_col]),
-        }
+    # def preprocess(batch):
+    #     return {
+    #         "pixel_values": [TF.to_tensor(x) * 255 for x in batch[img_col]],
+    #         "label": torch.tensor(batch[label_col]),
+    #     }
 
-    if val := ds.get("validation"):
-        val = val.with_transform(preprocess)
-    else:
-        nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
-        val = nontrain["train"].with_transform(preprocess)
+    # if val := ds.get("validation"):
+    #     val = val.with_transform(preprocess)
+    # else:
+    #     nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
+    #     val = nontrain["train"].with_transform(preprocess)
 
     max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
     max_entropy_shifted_ds.set_format('torch', columns=['pixel_values','label'])
     natural_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
     natural_shifted_ds.set_format('torch', columns=['pixel_values','label'])
 
+    example = max_entropy_shifted_ds[0]['pixel_values']
+    c, h, w = example.shape
+
+    unique_labels = torch.unique(natural_shifted_ds['label'])
+    num_unique_labels = len(unique_labels)
+    
     checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
     data_dicts = []
 
@@ -105,7 +112,7 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
                         dataset_str,
                         net,
                         h,
-                        len(labels),
+                        num_unique_labels, # len(labels),
                         seed,
                         models_path,
                         checkpoint

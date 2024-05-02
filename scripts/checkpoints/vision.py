@@ -87,9 +87,9 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
         nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
         val = nontrain["train"].with_transform(preprocess)
 
-    max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/partial-max-entropy-{dataset_str}')
+    max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
     max_entropy_shifted_ds.set_format('torch', columns=['pixel_values','label'])
-    natural_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}')
+    natural_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
     natural_shifted_ds.set_format('torch', columns=['pixel_values','label'])
 
     checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
@@ -258,7 +258,7 @@ def run_model(
         dataloader = DataLoader(max_entropy_shifted_ds, batch_size=512)
         for batch in dataloader:
             pixel_values = batch["pixel_values"].to(device) * 255
-            print(pixel_values.isnan().sum())
+            print("nansum", pixel_values.isnan().sum())
             loss = model(pixel_values, batch["label"].to(device)).loss.item()
             running_mean_loss += (loss / len(dataloader))
         arch_data["maxent_shifted_loss"] = running_mean_loss
@@ -270,7 +270,7 @@ def run_model(
         #     running_mean_loss += (loss / len(natural_shifted_ds))
 
         # arch_data["ds_shifted_loss"] = running_mean_loss
-        # data.append(arch_data)
+        data.append(arch_data)
 
     return data
 

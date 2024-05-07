@@ -127,7 +127,7 @@ def finetuned_stats_worker(
         running_bigram_stats /= np.maximum(1, np.nansum(running_bigram_stats, axis=1)[:, None])
 
         es_bigrams = coo_matrix(np.array(running_bigram_stats))
-        counts_path = Path.cwd() / "output" / f"finetune_bigram_{experiment.model_name}_{experiment.num_samples}_{step}.pkl"
+        counts_path = Path("/") / "mnt" / "ssd-1" / "lucia" / "finetune" / f"finetune_bigram_{experiment.model_name}_{experiment.num_samples}_{step}.pkl"
         with open(counts_path, 'wb') as f:
             pickle.dump(es_bigrams, f)
 

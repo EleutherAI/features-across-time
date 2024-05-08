@@ -2,6 +2,7 @@ import os
 import random
 from argparse import ArgumentParser
 from pathlib import Path
+import yaml
 
 from tqdm import tqdm
 import safetensors
@@ -46,38 +47,6 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    # Allow specifying load_dataset("svhn", "cropped_digits") as "svhn:cropped_digits"
-    # We don't use the slash because it's a valid character in a dataset name
-    # path, _, name = dataset_str.partition(":")
-    # ds = load_dataset(path, name or None)
-    # assert isinstance(ds, DatasetDict)
-
-    # # Infer columns and class labels
-    # img_col, label_col = infer_columns(ds["train"].features)
-    # labels = ds["train"].features[label_col].names
-    # # print(f"Classes in '{dataset_str}': {labels}")
-
-    # # Convert to RGB so we don't have to think about it
-    # ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
-
-    # # Infer the image size from the first image
-    # example = ds["train"][0][img_col]
-    # c, (h, w) = len(example.mode), example.size
-    # print(len(labels), h)
-    # print(f"Image size: {h} x {w}")
-
-    # def preprocess(batch):
-    #     return {
-    #         "pixel_values": [TF.to_tensor(x) * 255 for x in batch[img_col]],
-    #         "label": torch.tensor(batch[label_col]),
-    #     }
-
-    # if val := ds.get("validation"):
-    #     val = val.with_transform(preprocess)
-    # else:
-    #     nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
-    #     val = nontrain["train"].with_transform(preprocess)
-
     max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
     max_entropy_shifted_ds.set_format('torch', columns=['pixel_values','label'])
     natural_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
@@ -102,10 +71,11 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
                         dataset_str,
                         net,
                         h,
-                        num_unique_labels, # len(labels),
+                        num_unique_labels,
                         seed,
                         models_path,
-                        checkpoint
+                        checkpoint,
+                        batch_sizes
                     )
                 )
                 pbar.update(1)
@@ -114,7 +84,6 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
 
 
 def run_model(
-    # Training data
     max_entropy_shifted_ds,
     natural_shifted_ds,
     ds_str: str,
@@ -123,9 +92,10 @@ def run_model(
     num_classes: int,
     seed: int,
     models_path: str,
-    checkpoint: int
+    checkpoint: int,
+    batch_sizes: dict[str, int]
 ) -> list[dict]:  
-    device = "cuda"
+    device = "cuda:0"
     model_path = os.path.join(models_path, ds_str)
     assert os.path.isdir(model_path)
 
@@ -139,41 +109,11 @@ def run_model(
         if os.path.isdir(os.path.join(model_path, name)) and name.startswith(net_str)
     ]
 
-    # print(f"Model sizes in {net_str}: {model_archs}")
     data = []
     for model_arch, model_path in zip(model_archs, model_paths):
         match model_arch.partition("-"):
             case ("convnext", _, arch):
-                from transformers import ConvNextV2Config, ConvNextV2ForImageClassification
-                match arch:
-                    case "atto" | "":  # default
-                        depths = [2, 2, 6, 2]
-                        hidden_sizes = [40, 80, 160, 320]
-                    case "femto":
-                        depths = [2, 2, 6, 2]
-                        hidden_sizes = [48, 96, 192, 384]
-                    case "pico":
-                        depths = [2, 2, 6, 2]
-                        hidden_sizes = [64, 128, 256, 512]
-                    case "nano":
-                        depths = [2, 2, 8, 2]
-                        hidden_sizes = [80, 160, 320, 640]
-                    case "tiny":
-                        depths = [3, 3, 9, 3]
-                        hidden_sizes = [96, 192, 384, 768]
-                    case other:
-                        raise ValueError(f"Unknown ConvNeXt architecture {other}")
-
-                cfg = ConvNextV2Config(
-                    image_size=image_size,
-                    depths=depths,
-                    drop_path_rate=0.1,
-                    hidden_sizes=hidden_sizes,
-                    num_labels=num_classes,
-                    # The default of 4 x 4 patches shrinks the image too aggressively for
-                    # low-resolution images like CIFAR-10
-                    patch_size=1,
-                )
+                from transformers import ConvNextV2ForImageClassification
                 model = ConvNextV2ForImageClassification.from_pretrained(model_path).to(device)
             case ("regnet", _, arch):
                 from torchvision.models import (
@@ -254,21 +194,32 @@ def run_model(
         }
         
         running_mean_loss = 0.0
-        dataloader = DataLoader(max_entropy_shifted_ds, batch_size=512)
-        for batch in dataloader:
-            pixel_values = batch["pixel_values"].to(device) * 255
-            print("nansum", pixel_values.isnan().sum())
-            loss = model(pixel_values, batch["label"].to(device)).loss.item()
-            running_mean_loss += (loss / len(dataloader))
-        arch_data["maxent_shifted_loss"] = running_mean_loss
-        
-        # running_mean_loss = 0.0
-        # dataloader = DataLoader(natural_shifted_ds, batch_size=512)
-        # for batch in dataloader:
-        #     loss = model(batch["pixel_values"].to(device) * 255, batch["label"].to(device)).loss.item()
-        #     running_mean_loss += (loss / len(natural_shifted_ds))
+        running_mean_accuracy = 0.0
+        batch_size = 512 if model_arch not in batch_sizes else batch_sizes[model_arch]
 
-        # arch_data["ds_shifted_loss"] = running_mean_loss
+        dataloader = DataLoader(max_entropy_shifted_ds, batch_size=batch_size)
+        for batch in dataloader:
+            output = model(batch["pixel_values"].to(device) * 256, batch["label"].to(device))
+            running_mean_loss += (output.loss.item() / len(dataloader))
+
+            accuracy = output.logits.argmax(dim=1).eq(batch["label"].to(device)).sum().item()
+            running_mean_accuracy += accuracy / len(max_entropy_shifted_ds)
+        del output
+        arch_data["maxent_shifted_loss"] = running_mean_loss
+        arch_data["maxent_shifted_accuracy"] = running_mean_accuracy
+        
+        running_mean_loss = 0.0
+        running_mean_accuracy = 0.0
+        dataloader = DataLoader(natural_shifted_ds, batch_size=256)
+        for batch in dataloader:
+            output = model(batch["pixel_values"].to(device) * 255, batch["label"].to(device))
+            running_mean_loss += (output.loss.item() / len(natural_shifted_ds))
+
+            accuracy = output.logits.argmax(dim=1).eq(batch["label"].to(device)).sum().item()
+            running_mean_accuracy += accuracy / len(natural_shifted_ds)
+
+        arch_data["ds_shifted_loss"] = running_mean_loss
+        arch_data["ds_shifted_accuracy"] = running_mean_accuracy
         data.append(arch_data)
 
     return data
@@ -278,7 +229,14 @@ if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
 
     parser = ArgumentParser()
-    parser.add_argument("--datasets", type=str, default=["cifar10", "svhn:cropped_digits", "mnist"], nargs="+")
+    parser.add_argument("--datasets", type=str, default=[
+            "cifar10", 
+            "svhn:cropped_digits", 
+            "mnist", 
+            # "evanarlian/imagenet_1k_resized_256", 
+            # "fashion_mnist",
+            # "cifarnet"
+        ], nargs="+")
     parser.add_argument(
         "--nets",
         type=str,
@@ -290,14 +248,16 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoints", type=str, default="/mnt/ssd-1/lucia/img-ckpts", help="Path to directory containing model checkpoints")
     args = parser.parse_args()
 
+    with open('/scripts/batch_sizes.yaml', 'r') as f:
+        batch_sizes = yaml.safe_load(f)['A100']
+    
     data_dicts = []
     for dataset in args.datasets:
         data_dicts.extend(
             run_dataset(dataset, args.nets, args.seed, args.checkpoints)
         )
         df = pd.DataFrame(data_dicts)
-        df.to_csv(f'vision-maxent-{dataset}.csv', index=False)
+        df.to_csv(Path('/mnt/ssd-1/lucia/24-05-08') / f'vision-{dataset}.csv', index=False)
     
     df = pd.DataFrame(data_dicts)
-    df.to_csv('vision-maxent.csv', index=False)
-
+    df.to_csv(Path('/mnt/ssd-1/lucia/24-05-08') / 'vision.csv', index=False)

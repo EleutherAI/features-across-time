@@ -71,13 +71,29 @@ def plot(
             for i, model in enumerate(df["net"].unique()):
                 model_df = df[(df["ds"] == dataset) & (df["net"] == model)]
                 
+                color = px.colors.qualitative.Plotly[4]
+
+                mean_loss_per_step = model_df.groupby("step")[f"{loss}_bpb"].mean()
+                print(mean_loss_per_step)
+                fig.add_trace(
+                    go.Scatter(
+                        x=model_df[model_df["arch"] == model_df["arch"].unique()[0]]["step"],
+                        y=mean_loss_per_step,
+                        mode="lines+markers",
+                        marker=dict(size=5, symbol=marker_series[0]),
+                        name="Mean",
+                        line=dict(color=color),
+                        showlegend=False,
+                    ),
+                    row=1,
+                    col=i + 1,
+                )
+                
                 for j, arch in enumerate(model_df["arch"].unique()):
                     arch_df = model_df[model_df["arch"] == arch]
                     print(len(arch_df))
 
-                    color = px.colors.qualitative.Plotly[4]
-                    if j != 2:
-                        color = hex_to_rgba(color, opacity=0.17)
+                    transparent_color = hex_to_rgba(color, opacity=0.17)
 
                     print(arch_df[f"{loss}_bpb"])
                     print(arch_df["step"])
@@ -86,9 +102,9 @@ def plot(
                             x=arch_df["step"],
                             y=arch_df[f"{loss}_bpb"],
                             mode="lines+markers",
-                            marker=dict(size=5, symbol=marker_series[j]),
+                            marker=dict(size=5, symbol=marker_series[j + 1]),
                             name=arch,
-                            line=dict(color=color),
+                            line=dict(color=transparent_color),
                             showlegend=False,
                         ),
                         row=1,

@@ -38,14 +38,14 @@ def run_checkpoint_experiment_workers(
     if not gpu_ids:
         gpu_ids = list(range(torch.cuda.device_count()))
 
-    print(gpu_ids, experiment.steps)
     max_steps_per_chunk = math.ceil(len(experiment.steps) / len(gpu_ids))
     
     step_indices = [
         experiment.steps[i : i + max_steps_per_chunk]
         for i in range(0, len(experiment.steps), max_steps_per_chunk)
     ]
-    print(step_indices)
+
+    print(gpu_ids, step_indices)
 
     args = [
         (

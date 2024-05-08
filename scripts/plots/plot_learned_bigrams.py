@@ -111,39 +111,41 @@ def main():
     
     with open(ngram_path, "rb") as f:
         bigram_counts = pickle.load(f).toarray().astype(np.float32)
-        data_bigram_probs = torch.tensor(
+        bigram_counts[bigram_counts.sum(axis=1) == 0] = 1 / 50_277
+        flattened_data_bigram_probs = torch.tensor(
             bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)
-        )
+        ).flatten()
 
-    print(data_bigram_probs[:10, :10])
-    del data_bigram_probs, bigram_counts
+    del bigram_counts
     
     model_dfs = []
     for model_name, pretty_model_name, num_chunks in model_metadata:
         kl_divs = []
         for step in steps:
             print("loop")
-            counts_path = Path.cwd() / "output" / f"finetune_bigram_{model_name}_{num_samples}_{step}.pkl"
+            counts_path = Path('/') / "mnt" / "ssd-1" / "lucia" / "finetune" / f"finetune_bigram_{model_name}_{num_samples}_{step}.pkl"
             with open(counts_path, 'rb') as f:
                 learned_bigram_probs = torch.tensor(pickle.load(f).toarray(), dtype=torch.float32)
-                print(learned_bigram_probs[:10, :10])
-                del learned_bigram_probs, learned_bigram_probs
-    #         print("opened")
-    #         kl_divs.append(kl_divergence(learned_bigram_probs.flatten(), data_bigram_probs.flatten()).item())
+                learned_bigram_probs[learned_bigram_probs.sum(axis=1) == 0] = 1 / 50_277
+                assert np.all(
+                    np.isclose(learned_bigram_probs.sum(axis=1), 1) | np.isclose(learned_bigram_probs.sum(axis=1), 0))
+            print("opened")
+            kl_divs.append(kl_divergence(learned_bigram_probs.flatten(), flattened_data_bigram_probs).item())
+            print(kl_divs[-1])
 
-    #     model_df = pd.DataFrame(
-    #         {
-    #             "step": steps,
-    #             "kl_div": kl_divs,
-    #         }
-    #     )
-    #     model_df["model_name"] = model_name
-    #     model_df["pretty_model_name"] = pretty_model_name
-    #     model_dfs.append(model_df)
-    # df = pd.concat(model_dfs)
-    # df.to_csv("finetune_bigram_kl_divs.csv")
+        model_df = pd.DataFrame(
+            {
+                "step": steps,
+                "kl_div": kl_divs,
+            }
+        )
+        model_df["model_name"] = model_name
+        model_df["pretty_model_name"] = pretty_model_name
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
+    df.to_csv(Path('/') / "mnt" / "ssd-1" / "lucia" / "finetune" / "finetune_bigram_kl_divs.csv")
 
-    df = pd.read_csv("finetune_bigram_kl_divs.csv")
+    df = pd.read_csv(Path('/') / "mnt" / "ssd-1" / "lucia" / "finetune" / "finetune_bigram_kl_divs.csv")
     plot(df, image_name, debug, model_series)
 
 

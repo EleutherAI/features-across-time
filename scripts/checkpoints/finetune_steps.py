@@ -90,7 +90,6 @@ def finetuned_stats_worker(
         data = iter(data_loader)
         model = experiment.get_model(experiment.team, experiment.model_name, step, tmp_cache_dir, device=device)
         running_bigram_stats = torch.zeros(experiment.d_vocab, experiment.d_vocab, device=device)
-        running_unigram_counts = torch.zeros(experiment.d_vocab, device=device)
 
         # running_step_ngram_loss_means = [0.0] * len(experiment.ngram_orders)
         # running_step_div_means = torch.zeros(len(div_labels))
@@ -115,19 +114,25 @@ def finetuned_stats_worker(
             # Collect implicit bigram probabilities
             # print(running_bigram_stats[sample.flatten()].shape, F.softmax(logits, dim=-1).flatten(0, 1).shape)
             # print(F.softmax(logits.flatten(0, 1), dim=-1).shape, F.softmax(logits.flatten(0, 1), dim=-1)[0].sum())
-
-            running_bigram_stats.scatter_add_(0, sample.flatten().to(torch.int64).unsqueeze(1).expand(-1, experiment.d_vocab), F.softmax(logits.flatten(0, 1), dim=-1))
-
-            running_unigram_counts += torch.bincount(sample.flatten(), minlength=experiment.d_vocab)
+            running_bigram_stats.scatter_add_(
+                0, 
+                sample.flatten().to(torch.int64).unsqueeze(1).expand(-1, experiment.d_vocab), 
+                F.softmax(logits.flatten(0, 1), dim=-1))
 
             # running_step_div_means += (divergences / num_iters).cpu()
             pbar.update(1)
         
         running_bigram_stats = running_bigram_stats.cpu().numpy()
-        running_bigram_stats /= np.maximum(1, np.nansum(running_bigram_stats, axis=1)[:, None])
+        # if gpu_id == 0: print("asd", np.sum(running_bigram_stats, axis=1)[:50], np.sum(running_bigram_stats))
+        # import plotly.express as px
+        # fig = px.histogram(np.sum(running_bigram_stats, axis=1))
+        # fig.write_image(f"bigram_{experiment.model_name}_{experiment.num_samples}_{step}.pdf")
+        running_bigram_stats /= np.maximum(1, np.sum(running_bigram_stats, axis=1)[:, None])
+        if gpu_id == 0: print("a", np.all(
+            np.isclose(running_bigram_stats.sum(axis=1), 1) | np.isclose(running_bigram_stats.sum(axis=1), 0)))
 
         es_bigrams = coo_matrix(np.array(running_bigram_stats))
-        counts_path = Path("/") / "mnt" / "ssd-1" / "lucia" / "finetune" / f"finetune_bigram_{experiment.model_name}_{experiment.num_samples}_{step}.pkl"
+        counts_path = Path("/") / "mnt" / "ssd-1" / "lucia" / "finetune" / f"2-finetune_bigram_{experiment.model_name}_{experiment.num_samples}_{step}.pkl"
         with open(counts_path, 'wb') as f:
             pickle.dump(es_bigrams, f)
 
@@ -192,7 +197,7 @@ def main(ngram_path: str, dataset_path: str, tmp_cache_path: str, seed: int=1):
 
     experiments = [
         Experiment(
-            num_samples=1024, 
+            num_samples=8192, 
             batch_size=batch_size, 
             seq_len=2048, 
             team="EleutherAI", 
@@ -205,7 +210,7 @@ def main(ngram_path: str, dataset_path: str, tmp_cache_path: str, seed: int=1):
             eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id,
         )
         for model_name, batch_size in [
-            ("pythia-14m", 4),
+            ("pythia-14m", 2),
             ("pythia-70m", 4),
             ("pythia-160m", 4),
             ("pythia-410m", 4),

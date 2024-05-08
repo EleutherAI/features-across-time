@@ -14,16 +14,6 @@ from torch import Tensor, nn
 from transformers.modeling_outputs import ModelOutput
 from torch.utils.data import DataLoader
 
-def load_state_dict_with_modified_keys(model, state_dict_path):
-    loaded_state_dict = safetensors.torch.load_file(state_dict_path)
-
-    modified_state_dict = {}
-    for key, value in loaded_state_dict.items():
-        modified_key = 'model.' + key
-        modified_state_dict[modified_key] = value
-
-    model.load_state_dict(modified_state_dict, strict=False)
-
 
 class HfWrapper(nn.Module):
     def __init__(self, model):
@@ -207,7 +197,8 @@ def run_model(
                         raise ValueError(f"Unknown RegNet architecture {other}")
 
                 net.stem[0].stride = (1, 1)  # type: ignore
-                load_state_dict_with_modified_keys(net, os.path.join(model_path, 'model.safetensors'))
+                state_dict = safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors'))
+                net.load_state_dict(state_dict, strict=False)
                 model = HfWrapper(net).to(device)
 
             case ("swin", _, arch):
@@ -248,7 +239,8 @@ def run_model(
                     block=SwinTransformerBlockV2,
                     downsample_layer=PatchMergingV2,
                 )
-                load_state_dict_with_modified_keys(swin, os.path.join(model_path, 'model.safetensors'))
+                state_dict = safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors'))
+                swin.load_state_dict(state_dict, strict=False)
                 model = HfWrapper(swin).to(device)
             case _:
                 raise ValueError(f"Unknown model {model_arch}")

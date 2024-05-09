@@ -48,8 +48,16 @@ class LogSpacedCheckpoint(TrainerCallback):
             args.save_safetensors = False
 
 
+class LossLoggingCallback(TrainerCallback):
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        gpu_rank = int(os.environ.get('LOCAL_RANK', '0'))
+        if 'loss' in logs:
+            print(f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}")
+        if 'eval_loss' in logs:
+            print(f"{gpu_rank}: Step {state.global_step}: Evaluation loss: {logs['eval_loss']}")
+
+
 def main(tmp_cache_path: str, data_path: str, seed=1):
-    # Seed everything
     np.random.seed(seed)
     random.seed(seed)
     torch.manual_seed(seed)
@@ -109,14 +117,6 @@ def main(tmp_cache_path: str, data_path: str, seed=1):
 
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Number of trainable parameters: {trainable_params}")
-
-        class LossLoggingCallback(TrainerCallback):
-            def on_log(self, args, state, control, logs=None, **kwargs):
-                gpu_rank = int(os.environ.get('LOCAL_RANK', '0'))
-                if 'loss' in logs:
-                    print(f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}")
-                if 'eval_loss' in logs:
-                    print(f"{gpu_rank}: Step {state.global_step}: Evaluation loss: {logs['eval_loss']}")
 
         if experiment.training_arguments.local_rank == 0 or experiment.training_arguments.local_rank == -1:
             wandb.init(project="pythia-es", entity="eleutherai")

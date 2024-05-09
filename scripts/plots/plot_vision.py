@@ -36,10 +36,10 @@ def main(debug: bool):
         "regnet", "RegNet",
         "swin", "Swin Transformer",
     ]
-    
-    df = pd.read_csv(Path('/') / 'mnt' / 'ssd-1' / 'lucia' / 'vision-natural.csv')
-    maxent = pd.read_csv(Path('/') / 'mnt' / 'ssd-1' / 'lucia' / 'vision-maxent.csv')
-    df['maxent_shifted_loss'] = maxent['maxent_shifted_loss']
+    df = pd.read_csv(Path('/') / 'mnt' / 'ssd-1' / 'lucia' / '24-05-08' / 'vision.csv')
+    # df = pd.read_csv(Path('/') / 'mnt' / 'ssd-1' / 'lucia' / '24-05-08' / 'vision-natural.csv')
+    # maxent = pd.read_csv(Path('/') / 'mnt' / 'ssd-1' / 'lucia' / '24-05-08' /'vision-maxent.csv')
+    # df['maxent_shifted_loss'] = maxent['maxent_shifted_loss']
     df["pretty_model_name"] = df["net"].map(dict(zip(model_metadata[::2], model_metadata[1::2])))
 
     image_prefix = Path.cwd() / 'images'
@@ -55,12 +55,12 @@ def plot(
     bpb_coefficient = 0.3650388
     entropies = [2.89, 2.04, 2]
 
-    for idx, loss in enumerate(["maxent_shifted", "ds_shifted"]):
+    for loss in ["maxent_shifted", "ds_shifted"]:
         df[f"{loss}_bpb"] = df[f"{loss}_loss"] * bpb_coefficient
 
         for dataset in df["ds"].unique():
             fig = make_subplots(
-                rows=1,
+                rows=2,
                 cols=df["net"].nunique(),
                 shared_xaxes=True,
                 shared_yaxes=True,
@@ -74,7 +74,7 @@ def plot(
                 color = px.colors.qualitative.Plotly[4]
 
                 mean_loss_per_step = model_df.groupby("step")[f"{loss}_bpb"].mean()
-                print(mean_loss_per_step)
+                mean_acc_per_step = model_df.groupby("step")[f"{loss}_accuracy"].mean()
                 fig.add_trace(
                     go.Scatter(
                         x=model_df[model_df["arch"] == model_df["arch"].unique()[0]]["step"],
@@ -88,6 +88,19 @@ def plot(
                     row=1,
                     col=i + 1,
                 )
+                fig.add_trace(
+                    go.Scatter(
+                        x=model_df[model_df["arch"] == model_df["arch"].unique()[0]]["step"],
+                        y=mean_acc_per_step,
+                        mode="lines+markers",
+                        marker=dict(size=5, symbol=marker_series[0]),
+                        name="Mean",
+                        line=dict(color=color),
+                        showlegend=False,
+                    ),
+                    row=2,
+                    col=i + 1,
+                )
                 
                 for j, arch in enumerate(model_df["arch"].unique()):
                     arch_df = model_df[model_df["arch"] == arch]
@@ -95,8 +108,6 @@ def plot(
 
                     transparent_color = hex_to_rgba(color, opacity=0.17)
 
-                    print(arch_df[f"{loss}_bpb"])
-                    print(arch_df["step"])
                     fig.add_trace(
                         go.Scatter(
                             x=arch_df["step"],
@@ -108,6 +119,19 @@ def plot(
                             showlegend=False,
                         ),
                         row=1,
+                        col=i + 1,
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=arch_df["step"],
+                            y=arch_df[f"{loss}_accuracy"],
+                            mode="lines+markers",
+                            marker=dict(size=5, symbol=marker_series[j + 1]),
+                            name=arch,
+                            line=dict(color=transparent_color),
+                            showlegend=False,
+                        ),
+                        row=2,
                         col=i + 1,
                     )
 

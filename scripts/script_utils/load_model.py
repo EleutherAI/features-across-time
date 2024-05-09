@@ -66,10 +66,6 @@ def load_and_combine_shards(model_dir, step, device):
 def get_es_finetune(team: str, model_name: str, step: int | None, cache_dir: str, device: str = "cuda"):
     model_dir = f"/mnt/ssd-1/lucia/{model_name}-es"
     assert os.path.isdir(model_dir), f"Local directory {model_dir} does not exist"
-    # return GPTNeoXForCausalLM.from_pretrained(
-    #     f'{model_dir}/checkpoint-{step}', 
-    #     torch_dtype="auto", cache_dir=cache_dir
-    # ).to(device)
 
     try:
         model_path = f"{model_dir}/checkpoint-{step}/model.safetensors"

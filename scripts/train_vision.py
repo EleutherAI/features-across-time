@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+import yaml
 
 import numpy as np
 import torch
@@ -13,7 +14,7 @@ import torchvision.transforms.functional as TF
 from concept_erasure import QuadraticEditor, QuadraticFitter
 from concept_erasure.quantile import QuantileNormalizer
 from concept_erasure.utils import assert_type
-from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
+from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset, load_from_disk
 from einops import rearrange
 from torch import Tensor, nn, optim
 from torch.distributions import MultivariateNormal
@@ -170,6 +171,16 @@ class LogSpacedCheckpoint(TrainerCallback):
             control.should_save = True
 
 
+@dataclass
+class LossLoggingCallback(TrainerCallback):
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        gpu_rank = int(os.environ.get('LOCAL_RANK', '0'))
+        if 'loss' in logs:
+            print(f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}")
+        if 'eval_loss' in logs:
+            print(f"{gpu_rank}: Step {state.global_step}: Evaluation loss: {logs['eval_loss']}")
+
+
 def infer_columns(feats: Features) -> tuple[str, str]:
     # Infer the appropriate columns by their types
     img_cols = [k for k in feats if isinstance(feats[k], Image)]
@@ -277,12 +288,19 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
+    max_entropy_shifted = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
+    max_entropy_shifted.set_format('torch', columns=['pixel_values','label'])
+    natural_shifted = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
+    natural_shifted.set_format('torch', columns=['pixel_values','label'])
+
     val_sets = {
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "gaussian": gaussian,
         "real": val,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
+        "maxent": max_entropy_shifted,
+        "shift": natural_shifted,
     }
     for net in nets:
         run_model(
@@ -438,7 +456,7 @@ def run_model(
     trainer = Trainer(
         model,
         args=args,
-        callbacks=[LogSpacedCheckpoint()],
+        callbacks=[LogSpacedCheckpoint(), LossLoggingCallback()],
         compute_metrics=lambda x: {
             "acc": np.mean(x.label_ids == np.argmax(x.predictions, axis=-1))
         },
@@ -454,9 +472,17 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
+    torch.cuda.set_device(7)
 
     parser = ArgumentParser()
-    parser.add_argument("--datasets", type=str, default=["cifar10"], nargs="+")
+    parser.add_argument("--datasets", type=str, default=[
+            "cifar10", 
+            "svhn:cropped_digits", 
+            "mnist", 
+            "evanarlian/imagenet_1k_resized_256", 
+            "fashion_mnist",
+            "cifarnet"
+        ], nargs="+")
     parser.add_argument(
         "--nets",
         type=str,
@@ -469,6 +495,10 @@ if __name__ == "__main__":
         action="store_true",
     )
     args = parser.parse_args()
+
+    # with open('/mnt/ssd-1/lucia/batch_sizes.yaml', 'r') as f:
+    #     batch_sizes = yaml.safe_load(f)['A100']
+    # nets = [net for net in batch_sizes.keys()]
 
     for dataset in args.datasets:
         run_dataset(dataset, args.nets, args.train_on_fake, args.seed)

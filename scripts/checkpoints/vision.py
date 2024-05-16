@@ -40,22 +40,31 @@ def infer_columns(feats: Features) -> tuple[str, str]:
     return img_cols[0], label_cols[0]
 
 
-def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
+def to_greyscale(ex):
+    ex['pixel_values'] = ex['pixel_values'][0, :, :].unsqueeze(0).repeat(3, 1, 1).float()
+    return ex
+
+
+def preprocess(ex):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    max_entropy_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
-    max_entropy_shifted_ds.set_format('torch', columns=['pixel_values','label'])
-    natural_shifted_ds = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
-    natural_shifted_ds.set_format('torch', columns=['pixel_values','label'])
+    ds_variations = {
+        "maxent_shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf'),
+        "shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf'),
+    }
+    for ds_var in ds_variations.values():
+        ds_var.set_format('torch', columns=['pixel_values','label'])
 
-    example = max_entropy_shifted_ds[0]['pixel_values']
-    c, h, w = example.shape
+    if greyscale:
+        for ds_name in ds_variations.keys():
+            ds_variations[ds_name] = ds_variations[ds_name].map(to_greyscale)
 
-    unique_labels = torch.unique(natural_shifted_ds['label'])
+
+    unique_labels = torch.unique(next(iter(ds_variations.values()))['label'])
     num_unique_labels = len(unique_labels)
     
     checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
@@ -66,11 +75,9 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
             for checkpoint in checkpoints:
                 data_dicts.extend(
                     run_model(
-                        max_entropy_shifted_ds,
-                        natural_shifted_ds,
+                        ds_variations,
                         dataset_str,
                         net,
-                        h,
                         num_unique_labels,
                         seed,
                         models_path,
@@ -84,11 +91,9 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str):
 
 
 def run_model(
-    max_entropy_shifted_ds,
-    natural_shifted_ds,
+    ds_variations,
     ds_str: str,
     net_str: str,
-    image_size: int,
     num_classes: int,
     seed: int,
     models_path: str,
@@ -137,9 +142,9 @@ def run_model(
                         raise ValueError(f"Unknown RegNet architecture {other}")
 
                 net.stem[0].stride = (1, 1)  # type: ignore
-                state_dict = safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors'))
-                net.load_state_dict(state_dict, strict=False)
-                model = HfWrapper(net).to(device)
+                model = HfWrapper(net)
+                model.load_state_dict(safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors')))
+                model.to(device)
 
             case ("swin", _, arch):
                 from torchvision.models.swin_transformer import (
@@ -179,47 +184,33 @@ def run_model(
                     block=SwinTransformerBlockV2,
                     downsample_layer=PatchMergingV2,
                 )
-                state_dict = safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors'))
-                swin.load_state_dict(state_dict, strict=False)
-                model = HfWrapper(swin).to(device)
+                model = HfWrapper(swin)
+                model.load_state_dict(safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors')))
+                model.to(device)
             case _:
                 raise ValueError(f"Unknown model {model_arch}")
 
-        # Collect data on model
         arch_data = {
             "step": checkpoint,
             "ds": ds_str,
             "net": net_str,
             "arch": model_arch
         }
-        
-        running_mean_loss = 0.0
-        running_mean_accuracy = 0.0
         batch_size = 512 if model_arch not in batch_sizes else batch_sizes[model_arch]
 
-        dataloader = DataLoader(max_entropy_shifted_ds, batch_size=batch_size)
-        for batch in dataloader:
-            output = model(batch["pixel_values"].to(device) * 256, batch["label"].to(device))
-            running_mean_loss += (output.loss.item() / len(dataloader))
+        for ds_name, ds in ds_variations.items():
+            running_mean_loss = 0.0
+            true_pred_count = 0.0
+            dataloader = DataLoader(ds, batch_size=batch_size)
+            for batch in dataloader:
+                labels = batch["label"].to(device)
+                output = model(batch["pixel_values"].to(device), labels)
 
-            accuracy = output.logits.argmax(dim=1).eq(batch["label"].to(device)).sum().item()
-            running_mean_accuracy += accuracy / len(max_entropy_shifted_ds)
-        del output
-        arch_data["maxent_shifted_loss"] = running_mean_loss
-        arch_data["maxent_shifted_accuracy"] = running_mean_accuracy
-        
-        running_mean_loss = 0.0
-        running_mean_accuracy = 0.0
-        dataloader = DataLoader(natural_shifted_ds, batch_size=256)
-        for batch in dataloader:
-            output = model(batch["pixel_values"].to(device) * 255, batch["label"].to(device))
-            running_mean_loss += (output.loss.item() / len(natural_shifted_ds))
-
-            accuracy = output.logits.argmax(dim=1).eq(batch["label"].to(device)).sum().item()
-            running_mean_accuracy += accuracy / len(natural_shifted_ds)
-
-        arch_data["ds_shifted_loss"] = running_mean_loss
-        arch_data["ds_shifted_accuracy"] = running_mean_accuracy
+                running_mean_loss += (output.loss.item() / len(dataloader))
+                true_pred_count += output.logits.argmax(dim=-1).eq(labels).sum().item()
+            del output
+            arch_data[f"{ds_name}_loss"] = running_mean_loss
+            arch_data[f"{ds_name}_accuracy"] = true_pred_count / len(ds)
         data.append(arch_data)
 
     return data
@@ -227,6 +218,9 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
+    greyscale = True
+    with open('/mnt/ssd-1/lucia/features-across-time/batch_sizes.yaml', 'r') as f:
+        batch_sizes = yaml.safe_load(f)['A100']
 
     parser = ArgumentParser()
     parser.add_argument("--datasets", type=str, default=[
@@ -254,10 +248,10 @@ if __name__ == "__main__":
     data_dicts = []
     for dataset in args.datasets:
         data_dicts.extend(
-            run_dataset(dataset, args.nets, args.seed, args.checkpoints)
+            run_dataset(dataset, args.nets, args.seed, args.checkpoints, batch_sizes, greyscale)
         )
         df = pd.DataFrame(data_dicts)
-        df.to_csv(Path('/mnt/ssd-1/lucia/24-05-08') / f'vision-{dataset}.csv', index=False)
+        df.to_csv(Path('/mnt/ssd-1/lucia/24-05-15') / f'vision-{dataset}{"-greyscale" if greyscale else ""}.csv', index=False)
     
     df = pd.DataFrame(data_dicts)
-    df.to_csv(Path('/mnt/ssd-1/lucia/24-05-08') / 'vision.csv', index=False)
+    df.to_csv(Path('/mnt/ssd-1/lucia/24-05-15') / f'vision{"-greyscale" if greyscale else ""}.csv', index=False)

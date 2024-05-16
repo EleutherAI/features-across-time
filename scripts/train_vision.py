@@ -213,9 +213,6 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
     # Convert to RGB so we don't have to think about it
     ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
 
-    # Convert to RGB so we don't have to think about it
-    ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
-
     # Infer the image size from the first image
     example = ds["train"][0][img_col]
     c, (h, w) = len(example.mode), example.size

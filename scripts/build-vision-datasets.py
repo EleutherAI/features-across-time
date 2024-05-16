@@ -77,31 +77,37 @@ def build_from_dataset(dataset: str, num_class_samples: int, seed: int):
         class_data[item["label"].item()].append(item["pixel_values"])
     del test
 
-    mus = [torch.stack(data).float().mean(dim=0) for data in class_data.values()]
+    mus = {
+        key: torch.stack(data).float().mean(dim=0) for key, data in class_data.items()
+    }
 
-    # print("Generating mean shifted data...")
-    # shifted_data = []
-    # original_labels = []
-    # for label, data in tqdm(class_data.items()):
-    #     targets = [mu for i, mu in enumerate(mus) if i != label]
-    #     original_labels.extend([label] * (len(data) - len(data) % len(targets)))
+    print("Generating mean shifted data...")
+    shifted_data = []
+    shifted_labels = []
+    original_labels = []
+    for label, data in tqdm(class_data.items()):
+        targets = {i: mu for i, mu in mus.items() if i != label}
+        original_labels.extend([label] * (len(data) - len(data) % len(list(targets.keys()))))
         
-    #     for i, mu in enumerate(targets):
-    #         batch = data[
-    #             i * (len(data) // len(targets)):
-    #             i * (len(data) // len(targets)) + len(data) // len(targets)
-    #         ]
-    #         shifted = bounded_shift(torch.stack(batch), mu, bounds=(0., 1.))
-    #         shifted_data.append(shifted)
+        for idx, (i, mu) in enumerate(targets.items()):
+            batch = data[
+                idx * (len(data) // len(targets)):
+                idx * (len(data) // len(targets)) + len(data) // len(targets)
+            ]
+            shifted = bounded_shift(torch.stack(batch), mu, bounds=(0., 1.))
+            shifted_labels.extend([i] * len(batch))
+            shifted_data.append(shifted)
     
-    # data_dict = {
-    #     'pixel_values': torch.cat(shifted_data),
-    #     'label': torch.tensor(original_labels),
-    # }
-    # Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/3-natural-{dataset}.hf')
+    data_dict = {
+        'pixel_values': torch.cat(shifted_data),
+        'label': torch.tensor(original_labels),
+        'target': torch.tensor(shifted_labels)
+    }
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset}.hf')
 
     print("Generating maximum entropy data...")
-    dd_data = {}
+    dd_data = []
+    original_labels = []
     for label in tqdm(class_data.keys()):
         mu = mus[label].numpy()
         dd = DuryDistribution(mu, start=0.1)
@@ -115,43 +121,25 @@ def build_from_dataset(dataset: str, num_class_samples: int, seed: int):
             data[mask] = dd.sample(num_class_samples)[mask]
             mask = ~np.isfinite(data)
         print("i", i)
-        
-        data = torch.tensor(data, dtype=torch.float)
-        dd_data[label] = data
-    torch.save(dd_data, f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset}-{label}.pt')
-        
-    print("Mean shifting max entropy data...")
-    shifted_data = []
-    original_labels = []
-    for label in tqdm(class_data.keys()):
+        dd_data.append(torch.tensor(data, dtype=torch.float))
         original_labels.extend([label] * num_class_samples)
-        targets = [mu for i, mu in enumerate(mus) if i != label]
-        data = dd_data[label]
-        
-        for i, mu in enumerate(targets):
-            start = i * (len(data) // len(targets))
-            end = i * (len(data) // len(targets)) + len(data) // len(targets)
-            print(start, end)
-            batch = data[
-                i * (len(data) // len(targets)):
-                i * (len(data) // len(targets)) + len(data) // len(targets)
-            ]
-            shifted = bounded_shift(batch, mu, bounds=(0., 1.))
-            breakpoint()
-            shifted_data.append(shifted)
-
+    
+    # torch.save(dd_data, f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset}.pt')
     data_dict = {
-        'pixel_values': torch.cat(shifted_data),
-        'label': torch.tensor(original_labels),
+        'pixel_values': torch.cat(dd_data),
+        'label': torch.tensor(original_labels)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/3-max-entropy-{dataset}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset}.hf')
 
 
 def main():
     datasets = [
-        "cifar10", 
-        "svhn:cropped_digits", 
-        "mnist"
+        # "cifar10", 
+        # "svhn:cropped_digits", 
+        # "mnist"
+        "evanarlian/imagenet_1k_resized_256", 
+        "fashion_mnist",
+        "cifarnet"
     ]
     for dataset in datasets:
         build_from_dataset(dataset, num_class_samples=1_000, seed=0)

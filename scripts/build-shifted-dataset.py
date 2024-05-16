@@ -107,13 +107,13 @@ def build_from_dataset(dataset: str, num_class_samples: int, seed: int):
         dd = DuryDistribution(mu, start=0.1)
         data = dd.sample(num_class_samples)
         # resample until there's no nans
-        mask = np.isfinite(data)
+        mask = ~np.isfinite(data)
         i = 0
         while mask.sum() > 0:
             i += 1
             dd = DuryDistribution(mu, start=random.uniform(0, 1))
             data[mask] = dd.sample(num_class_samples)[mask]
-            mask = np.isfinite(data)
+            mask = ~np.isfinite(data)
         print("i", i)
         
         data = torch.tensor(data, dtype=torch.float)

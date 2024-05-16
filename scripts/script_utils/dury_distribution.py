@@ -2,8 +2,9 @@ from numpy.typing import NDArray
 from scipy.optimize import newton
 import numpy as np
 
+
 class DuryDistribution:
-    """Sample from p = exp(-a - b * x) in range [0, 1]
+    """Sample from p = exp(-a - b * x) in range [0, 1].
     
     # Derivations for helper equations
     a, x, mu, u = symbols('a x mu u')
@@ -21,34 +22,25 @@ class DuryDistribution:
         inverse_cdf = solve(Eq(cdf, u), x)[0]
         return lambdify((a, b, u), inverse_cdf)
     """
-    def __init__(self, mu: NDArray, start: int = 0.1):
+    def __init__(self, mu: NDArray):
         """Sampler for a maximum entropy distribution subject to hypercube and mean constraints.
         mu: mean of distribution."""
+        eps = np.finfo(mu.dtype).eps
+
         def get_mu(b: NDArray) -> NDArray:
             num = -(b - np.expm1(b))
-            denom = b * (np.expm1(b) + np.finfo(b.dtype).eps)
-            return num / denom
-
-        def get_mu_deriv(b: NDArray) -> NDArray:
-            num = b ** 2 * np.expm1(b) + 1 - np.expm1(2*b) + 2*np.expm1(b) + 2
-            denom = b ** 2 * (np.expm1(2*b) + 1 - 2*np.expm1(b) + 2)
-            return num / denom
+            denom = b * (np.expm1(b))
+            return num / (denom + eps)
         
-        self.b, converged, _ = newton(lambda b: get_mu(b) - mu, np.full_like(mu, start), fprime=get_mu_deriv, maxiter=200_000, full_output=True)
+        clipped_mu = mu.clip(3e-3, 1 - 3e-3)
+        self.b = newton(
+            lambda b: get_mu(b) - clipped_mu, np.full_like(clipped_mu, 0.001), maxiter=20_000, tol=1e-5
+        )
         self.a = -self.b + np.log(np.expm1(self.b) / self.b)
-        
-        print(f"Number of failures to converge: {converged.size - np.sum(converged)} / {converged.size}")
     
     
     def sample(self, num_samples: int):
-        '''Generate num_samples samples for each mu'''
+        '''Generate num_samples samples'''
         u = np.random.rand(num_samples, *self.a.shape)
         samples = np.log(-1 / ((self.b * u) * np.exp(self.a) - 1)) / self.b[None, :]
         return samples
-
-
-if __name__ == "__main__":
-    mu = np.random.rand(3, 5, 6)
-    dd = DuryDistribution(mu)
-    samples = dd.sample(30)
-    print(np.sum(np.isnan(samples)), "nan samples")

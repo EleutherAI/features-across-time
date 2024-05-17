@@ -285,10 +285,10 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
-    max_entropy_shifted = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
-    max_entropy_shifted.set_format('torch', columns=['pixel_values','label'])
-    natural_shifted = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
-    natural_shifted.set_format('torch', columns=['pixel_values','label'])
+    max_entropy = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
+    max_entropy.set_format('torch', columns=['pixel_values','label'])
+    shifted = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/shifted-{dataset_str}.hf')
+    shifted.set_format('torch', columns=['pixel_values','label'])
 
     val_sets = {
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
@@ -296,8 +296,8 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
         "gaussian": gaussian,
         "real": val,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
-        "maxent": max_entropy_shifted,
-        "shift": natural_shifted,
+        "maxent": max_entropy,
+        "shift": shifted,
     }
     for net in nets:
         run_model(
@@ -469,7 +469,6 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
-    torch.cuda.set_device(7)
 
     parser = ArgumentParser()
     parser.add_argument("--datasets", type=str, default=[
@@ -492,10 +491,6 @@ if __name__ == "__main__":
         action="store_true",
     )
     args = parser.parse_args()
-
-    # with open('/mnt/ssd-1/lucia/batch_sizes.yaml', 'r') as f:
-    #     batch_sizes = yaml.safe_load(f)['A100']
-    # nets = [net for net in batch_sizes.keys()]
 
     for dataset in args.datasets:
         run_dataset(dataset, args.nets, args.train_on_fake, args.seed)

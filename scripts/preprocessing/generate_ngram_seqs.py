@@ -8,12 +8,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from numpy.typing import NDArray
-from scipy.stats import entropy
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 from tokengrams import MemmapIndex
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
+
+from scripts.script_utils.bpb import conditional_entropy
 
 
 class NgramSeqModel:
@@ -133,12 +134,6 @@ class NgramSeqModel:
         ).item()
 
 
-def conditional_entropy(arr: NDArray):
-    """H(Y|X) = H(X, Y) - H(X)"""
-    H = entropy(arr.data) - entropy(arr.sum(1))
-    print("Entropy: ", H)  # 5.59
-    bpb_ratio = 0.3366084909549386
-    print("Entropy (bpb):", H * bpb_ratio)
 
 
 def bigram_properties(bigrams_path, ngram_model, batch):

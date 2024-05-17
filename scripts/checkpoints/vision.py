@@ -3,16 +3,23 @@ import random
 from argparse import ArgumentParser
 from pathlib import Path
 import yaml
+import pickle
 
 from tqdm import tqdm
 import safetensors
 import numpy as np
 import pandas as pd
 import torch
-from datasets import ClassLabel, Features, Image, load_dataset, load_from_disk
+import torchvision.transforms.functional as TF
+from datasets import ClassLabel, Features, Image, DatasetDict, load_dataset, load_from_disk
 from torch import Tensor, nn
 from transformers.modeling_outputs import ModelOutput
 from torch.utils.data import DataLoader
+from einops import rearrange
+from scripts.train_vision import IndependentCoordinateSampler, ConceptEditedDataset, QuantileNormalizedDataset, GaussianMixture
+from concept_erasure import QuadraticFitter
+from concept_erasure.quantile import QuantileNormalizer
+from concept_erasure.utils import assert_type
 
 
 class HfWrapper(nn.Module):
@@ -40,15 +47,7 @@ def infer_columns(feats: Features) -> tuple[str, str]:
 
 
 def to_greyscale(ex):
-    if ex['pixel_values'].isnan().sum():
-        print("found nan data")
     ex['pixel_values'] = ex['pixel_values'][0, :, :].unsqueeze(0).repeat(3, 1, 1).float()
-    
-    return ex
-
-
-def preprocess(ex):
-    ex['pixel_values'] = ex['pixel_values'].permute(2, 0, 1).float().div(255)
     return ex
 
 
@@ -61,31 +60,72 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
 
     path, _, name = dataset_str.partition(":")
     ds = load_dataset(path, name or None)
+    assert isinstance(ds, DatasetDict)
+
     img_col, label_col = infer_columns(ds["train"].features)
     ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
 
-    test = ds['test'].rename_column(img_col, 'pixel_values')
-    nontrain = test.train_test_split(train_size=1024, seed=seed)
-    val = nontrain["train"]
-    val.set_format('torch', columns=['pixel_values','label'])
-    val = val.map(preprocess)
+    # Infer the image size from the first image
+    example = ds["train"][0][img_col]
+    c, (h, w) = len(example.mode), example.size
+
+    train = ds["train"].with_format("torch")
+    X = assert_type(Tensor, train[img_col]).div(255)
+    X = rearrange(X, "n h w c -> n c h w")
+    Y = assert_type(Tensor, train[label_col])
+
+    print("Computing statistics...")
+    fitter = QuadraticFitter.fit(X.flatten(1).cuda(), Y.cuda())
+    normalizer = QuantileNormalizer(X, Y)
+    print("Done.")
+
+    def preprocess(ex):
+        ex['pixel_values'] = TF.to_tensor(ex[img_col])
+        ex['label'] = torch.tensor(ex[label_col])
+        return ex
     
+    if val := ds.get("validation"):
+        val = val.map(preprocess)
+    else:
+        nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
+        val = nontrain["train"].map(preprocess)
+
+    class_probs = torch.bincount(Y).float()
+    gaussian = GaussianMixture(
+        fitter.mean_x.cpu(), fitter.sigma_xx.cpu(), class_probs, len(val), (c, h, w)
+    )
+
+    cache = Path.cwd() / "editor-cache" / f"{dataset_str}.pkl"
+    if cache.exists():
+        with open(cache, "rb") as f:
+            editor = pickle.load(f)
+    else:
+        print("Computing optimal transport maps...")
+
+        editor = fitter.editor("cpu")
+        cache.parent.mkdir(exist_ok=True)
+
+        with open(cache, "wb") as f:
+            pickle.dump(editor, f)
+
     ds_variations = {
-        "val": val,
         "maxent": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf'),
-        "shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf'),
+        "shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/shifted-{dataset_str}.hf'),
+        "real": val,
+        "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
+        "got": ConceptEditedDataset(class_probs, editor, X, Y),
+        "gaussian": gaussian,
+        "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
-    for ds_var in ds_variations.values():
-        ds_var.set_format('torch', columns=['pixel_values','label'])
+
+    for ds_name in ["maxent", "shifted", "real"]:
+        ds_variations[ds_name].set_format('torch', columns=['pixel_values', label_col])
 
     if greyscale:
-        for ds_name in ds_variations.keys():
+        for ds_name in ["maxent", "shifted"]:
             ds_variations[ds_name] = ds_variations[ds_name].map(to_greyscale)
 
-
-    unique_labels = torch.unique(next(iter(ds_variations.values()))['label'])
-    num_unique_labels = len(unique_labels)
-    
+    num_unique_labels = len(torch.unique(next(iter(ds_variations.values()))[label_col]))
     checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
     data_dicts = []
 
@@ -98,7 +138,6 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
                         dataset_str,
                         net,
                         num_unique_labels,
-                        seed,
                         models_path,
                         checkpoint,
                         batch_sizes
@@ -114,12 +153,10 @@ def run_model(
     ds_str: str,
     net_str: str,
     num_classes: int,
-    seed: int,
     models_path: str,
     checkpoint: int,
     batch_sizes: dict[str, int]
 ) -> list[dict]:  
-    device = "cuda:0"
     model_path = os.path.join(models_path, ds_str)
     assert os.path.isdir(model_path)
 
@@ -227,9 +264,10 @@ def run_model(
 
                 running_mean_loss += (output.loss.item() / len(dataloader))
                 true_pred_count += output.logits.argmax(dim=-1).eq(labels).sum().item()
-            del output
+
             arch_data[f"{ds_name}_loss"] = running_mean_loss
             arch_data[f"{ds_name}_accuracy"] = true_pred_count / len(ds)
+            print(ds_name, arch_data[f"{ds_name}_accuracy"], running_mean_loss)
         data.append(arch_data)
 
     return data
@@ -239,7 +277,7 @@ if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
     greyscale = False
     with open('/mnt/ssd-1/lucia/features-across-time/batch_sizes.yaml', 'r') as f:
-        batch_sizes = yaml.safe_load(f)['A100']
+        batch_sizes = yaml.safe_load(f)['A40']
 
     parser = ArgumentParser()
     parser.add_argument("--datasets", type=str, default=[

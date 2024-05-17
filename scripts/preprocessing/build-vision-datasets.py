@@ -80,6 +80,12 @@ def build_from_dataset(dataset_str: str, seed: int):
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
+    # from torchvision.transforms.functional import to_pil_image
+    # for i in range(3):
+    #     image = to_pil_image(X[i])
+    #     image.save(f'images/tmp-svhn-{dataset_str}-{i}.png')
+    # breakpoint()
+
     class_data = defaultdict(list)
     for i in range(len(X)):
         class_data[Y[i].item()].append(X[i])
@@ -106,7 +112,7 @@ def build_from_dataset(dataset_str: str, seed: int):
         'original': torch.tensor(original_labels),
         'label': torch.tensor(labels)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/shifted-{dataset_str}.hf')
 
     print("Generating maximum entropy data...")
     dd_data = []
@@ -128,11 +134,11 @@ def build_from_dataset(dataset_str: str, seed: int):
 def main():
     datasets = [
         # "cifar10", 
-        # "svhn:cropped_digits", 
-        # "mnist"
-        "evanarlian/imagenet_1k_resized_256", 
-        "fashion_mnist",
-        "cifarnet"
+        "svhn:cropped_digits", 
+        # "mnist",
+        # "evanarlian/imagenet_1k_resized_256", 
+        # "fashion_mnist",
+        # "cifarnet",
     ]
     for dataset in datasets:
         build_from_dataset(dataset, seed=0)

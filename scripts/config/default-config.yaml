@@ -1,26 +1,16 @@
-# 4:50
 compute_environment: LOCAL_MACHINE
 debug: false
-distributed_type: FSDP
+distributed_type: MULTI_GPU
 downcast_bf16: 'no'
 dynamo_config:
   dynamo_backend: INDUCTOR
-fsdp_config:
-  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
-  fsdp_backward_prefetch: BACKWARD_PRE
-  fsdp_cpu_ram_efficient_loading: true
-  fsdp_forward_prefetch: true
-  fsdp_offload_params: false
-  fsdp_sharding_strategy: SHARD_GRAD_OP
-  fsdp_state_dict_type: FULL_STATE_DICT
-  fsdp_sync_module_states: true
-  fsdp_use_orig_params: true
+fsdp_config: {}
 machine_rank: 0
 main_training_function: main
 mixed_precision: bf16
 num_machines: 1
-num_processes: 7
-gpu_ids: "1, 2, 3, 4, 5, 6, 7"
+num_processes: 2
+gpu_ids: "6, 7"
 rdzv_backend: static
 same_network: true
 tpu_env: []

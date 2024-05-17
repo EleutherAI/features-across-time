@@ -9,8 +9,7 @@ import safetensors
 import numpy as np
 import pandas as pd
 import torch
-import torchvision.transforms.functional as TF
-from datasets import ClassLabel, DatasetDict, Features, Image, load_dataset, load_from_disk
+from datasets import ClassLabel, Features, Image, load_dataset, load_from_disk
 from torch import Tensor, nn
 from transformers.modeling_outputs import ModelOutput
 from torch.utils.data import DataLoader
@@ -41,19 +40,39 @@ def infer_columns(feats: Features) -> tuple[str, str]:
 
 
 def to_greyscale(ex):
+    if ex['pixel_values'].isnan().sum():
+        print("found nan data")
     ex['pixel_values'] = ex['pixel_values'][0, :, :].unsqueeze(0).repeat(3, 1, 1).float()
+    
     return ex
 
 
 def preprocess(ex):
+    ex['pixel_values'] = ex['pixel_values'].permute(2, 0, 1).float().div(255)
+    return ex
+
+
+def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, batch_sizes: dict, greyscale: bool):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+    path, _, name = dataset_str.partition(":")
+    ds = load_dataset(path, name or None)
+    img_col, label_col = infer_columns(ds["train"].features)
+    ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
+
+    test = ds['test'].rename_column(img_col, 'pixel_values')
+    nontrain = test.train_test_split(train_size=1024, seed=seed)
+    val = nontrain["train"]
+    val.set_format('torch', columns=['pixel_values','label'])
+    val = val.map(preprocess)
+    
     ds_variations = {
-        "maxent_shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf'),
+        "val": val,
+        "maxent": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf'),
         "shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/natural-{dataset_str}.hf'),
     }
     for ds_var in ds_variations.values():
@@ -218,7 +237,7 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
-    greyscale = True
+    greyscale = False
     with open('/mnt/ssd-1/lucia/features-across-time/batch_sizes.yaml', 'r') as f:
         batch_sizes = yaml.safe_load(f)['A100']
 
@@ -240,18 +259,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--checkpoints", type=str, default="/mnt/ssd-1/lucia/img-ckpts", help="Path to directory containing model checkpoints")
+    parser.add_argument("--sink", type=str, default="/mnt/ssd-1/lucia/24-05-16", help="Path to directory containing output CSVs")
     args = parser.parse_args()
-
-    with open('/scripts/batch_sizes.yaml', 'r') as f:
-        batch_sizes = yaml.safe_load(f)['A100']
     
     data_dicts = []
     for dataset in args.datasets:
-        data_dicts.extend(
-            run_dataset(dataset, args.nets, args.seed, args.checkpoints, batch_sizes, greyscale)
-        )
-        df = pd.DataFrame(data_dicts)
-        df.to_csv(Path('/mnt/ssd-1/lucia/24-05-15') / f'vision-{dataset}{"-greyscale" if greyscale else ""}.csv', index=False)
-    
-    df = pd.DataFrame(data_dicts)
-    df.to_csv(Path('/mnt/ssd-1/lucia/24-05-15') / f'vision{"-greyscale" if greyscale else ""}.csv', index=False)
+        data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, batch_sizes, greyscale)
+        df = pd.DataFrame(data_dict)
+        df.to_csv(Path(args.sink) / f'vision-{dataset}{"-greyscale" if greyscale else ""}.csv', index=False)

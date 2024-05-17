@@ -36,6 +36,13 @@ class DuryDistribution:
         self.b = newton(
             lambda b: get_mu(b) - clipped_mu, np.full_like(clipped_mu, 0.001), maxiter=20_000, tol=1e-5
         )
+
+        mask = ~np.isfinite(self.b)
+        while mask.sum():
+            self.b[mask] = newton(
+                lambda b: get_mu(b) - clipped_mu, np.full_like(clipped_mu, np.random.uniform(1e-4, 1e-2)), maxiter=20_000, tol=1e-3
+            )[mask]
+            mask = ~np.isfinite(self.b)
         self.a = -self.b + np.log(np.expm1(self.b) / self.b)
     
     

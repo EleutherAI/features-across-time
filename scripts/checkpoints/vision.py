@@ -46,12 +46,17 @@ def infer_columns(feats: Features) -> tuple[str, str]:
     return img_cols[0], label_cols[0]
 
 
-def to_greyscale(ex):
+def to_grayscale(ex):
     ex['pixel_values'] = ex['pixel_values'][0, :, :].unsqueeze(0).repeat(3, 1, 1).float()
     return ex
 
 
-def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, batch_sizes: dict, greyscale: bool):
+def map_cifarnet(ex):
+    ex['pixel_values'] = ex['pixel_values'].permute(1, 0, 2)
+    return ex
+
+
+def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: str, batch_sizes: dict, grayscale: bool):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
@@ -75,7 +80,7 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
     Y = assert_type(Tensor, train[label_col])
 
     print("Computing statistics...")
-    fitter = QuadraticFitter.fit(X.flatten(1).cuda(), Y.cuda())
+    fitter = QuadraticFitter.fit(X.flatten(1), Y)
     normalizer = QuantileNormalizer(X, Y)
     print("Done.")
 
@@ -109,8 +114,9 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
             pickle.dump(editor, f)
 
     ds_variations = {
-        "maxent": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf'),
-        "shifted": load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/shifted-{dataset_str}.hf'),
+        "maxent": load_from_disk(data_path / f'max-entropy-{dataset_str}.hf'),
+        "shifted": load_from_disk(data_path / f'shifted-{dataset_str}.hf'),
+        "truncated_normal": load_from_disk(data_path / f'truncated-normal-{dataset_str}.hf'),
         "real": val,
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
@@ -120,10 +126,13 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
 
     for ds_name in ["maxent", "shifted", "real"]:
         ds_variations[ds_name].set_format('torch', columns=['pixel_values', label_col])
-
-    if greyscale:
+    
+    if dataset_str == "EleutherAI/cifarnet":
+        for ds_name in ["maxent", "shifted", "truncated_normal"]:
+            ds_variations[ds_name] = ds_variations[ds_name].map(map_cifarnet)
+    if grayscale:
         for ds_name in ["maxent", "shifted"]:
-            ds_variations[ds_name] = ds_variations[ds_name].map(to_greyscale)
+            ds_variations[ds_name] = ds_variations[ds_name].map(to_grayscale)
 
     num_unique_labels = len(torch.unique(next(iter(ds_variations.values()))[label_col]))
     checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
@@ -257,7 +266,7 @@ def run_model(
         for ds_name, ds in ds_variations.items():
             running_mean_loss = 0.0
             true_pred_count = 0.0
-            dataloader = DataLoader(ds, batch_size=batch_size)
+            dataloader = DataLoader(ds, batch_size=batch_size, drop_last=True)
             for batch in dataloader:
                 labels = batch["label"].to(device)
                 output = model(batch["pixel_values"].to(device), labels)
@@ -275,7 +284,7 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
-    greyscale = False
+    grayscale = False
     with open('/mnt/ssd-1/lucia/features-across-time/batch_sizes.yaml', 'r') as f:
         batch_sizes = yaml.safe_load(f)['A40']
 
@@ -284,9 +293,8 @@ if __name__ == "__main__":
             "cifar10", 
             "svhn:cropped_digits", 
             "mnist", 
-            # "evanarlian/imagenet_1k_resized_256", 
-            # "fashion_mnist",
-            # "cifarnet"
+            "fashion_mnist",
+            "EleutherAI/cifarnet"
         ], nargs="+")
     parser.add_argument(
         "--nets",
@@ -296,12 +304,13 @@ if __name__ == "__main__":
         default=["convnext", "regnet", "swin", "vit"]
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--checkpoints", type=str, default="/mnt/ssd-1/lucia/img-ckpts", help="Path to directory containing model checkpoints")
-    parser.add_argument("--sink", type=str, default="/mnt/ssd-1/lucia/24-05-16", help="Path to directory containing output CSVs")
+    parser.add_argument("--data", type=str, default=Path.cwd() / "vision-data", help="Path to directory containing locally modified datasets")
+    parser.add_argument("--checkpoints", type=str, default=Path.cwd() / "img-ckpts", help="Path to directory containing model checkpoints")
+    parser.add_argument("--sink", type=str, default=Path.cwd() / '24-05-22', help="Path to directory containing output CSVs")
     args = parser.parse_args()
     
     data_dicts = []
     for dataset in args.datasets:
-        data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, batch_sizes, greyscale)
+        data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, args.data, batch_sizes, grayscale)
         df = pd.DataFrame(data_dict)
-        df.to_csv(Path(args.sink) / f'vision-{dataset}{"-greyscale" if greyscale else ""}.csv', index=False)
+        df.to_csv(Path(args.sink) / f'vision-{dataset}{"-grayscale" if grayscale else ""}.csv', index=False)

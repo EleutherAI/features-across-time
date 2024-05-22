@@ -285,7 +285,7 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
-    with open('/mnt/ssd-1/lucia/features-across-time/batch_sizes.yaml', 'r') as f:
+    with open(Path.cwd() / 'batch_sizes.yaml', 'r') as f:
         batch_sizes = yaml.safe_load(f)['A40-fashion-mnist']
 
     parser = ArgumentParser()

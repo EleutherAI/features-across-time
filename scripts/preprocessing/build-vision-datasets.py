@@ -1,15 +1,16 @@
 import random
 from collections import defaultdict
-
+from pathlib import Path
 import numpy as np
 import torch
 import torchvision.transforms.functional as TF
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
 from torch import Tensor
 from tqdm import tqdm
-from scripts.script_utils.dury_distribution import DuryDistribution
-from concept_erasure.utils import assert_type
 from einops import rearrange
+from concept_erasure.utils import assert_type
+
+from scripts.script_utils.dury_distribution import DuryDistribution
 from scripts.script_utils.truncated_normal import truncated_normal
 
 
@@ -43,7 +44,7 @@ def bounded_shift(
     return x
 
 
-def build_from_dataset(dataset_str: str, seed: int):
+def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
@@ -107,7 +108,7 @@ def build_from_dataset(dataset_str: str, seed: int):
         'original': torch.tensor(prev_Y),
         'label': torch.tensor(Y)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/vision-data/shifted-{dataset_str.replace("/", "--")}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'shifted-{dataset_str.replace("/", "--")}.hf')
 
     print("Generating Dury distribution maximum entropy data...")
     X = []
@@ -123,7 +124,7 @@ def build_from_dataset(dataset_str: str, seed: int):
         'pixel_values': torch.cat(X),
         'label': torch.tensor(Y)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/vision-data/max-entropy-{dataset_str.replace("/", "--")}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'dury-{dataset_str.replace("/", "--")}.hf')
 
     print("Generating truncated normal maximum entropy data...")
     # Use train dataset to stabilize sampling
@@ -149,7 +150,7 @@ def build_from_dataset(dataset_str: str, seed: int):
         'pixel_values': torch.cat(X),
         'label': torch.tensor(Y)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/vision-data/truncated-normal-{dataset_str.replace("/", "--")}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf')
 
 def main():
     datasets = [
@@ -160,7 +161,8 @@ def main():
         "EleutherAI/cifarnet",
     ]
     for dataset in datasets:
-        build_from_dataset(dataset, seed=0)
+        output_path = Path.cwd() / 'vision-data'
+        build_from_dataset(dataset, output_path, seed=0)
 
 
 if __name__ == "__main__":

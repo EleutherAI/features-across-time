@@ -285,9 +285,9 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
-    max_entropy = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
+    max_entropy = load_from_disk(Path.cwd() / f'shifted-data/dury-{dataset_str}.hf')
     max_entropy.set_format('torch', columns=['pixel_values','label'])
-    shifted = load_from_disk(f'/mnt/ssd-1/lucia/shifted-data/shifted-{dataset_str}.hf')
+    shifted = load_from_disk(Path.cwd() / f'shifted-data/shifted-{dataset_str}.hf')
     shifted.set_format('torch', columns=['pixel_values','label'])
 
     val_sets = {

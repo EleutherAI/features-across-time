@@ -7,9 +7,10 @@ import torchvision.transforms.functional as TF
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
 from torch import Tensor
 from tqdm import tqdm
-from script_utils.dury_distribution import DuryDistribution
+from scripts.script_utils.dury_distribution import DuryDistribution
 from concept_erasure.utils import assert_type
 from einops import rearrange
+from scripts.script_utils.truncated_normal import truncated_normal
 
 
 def infer_columns(feats: Features) -> tuple[str, str]:
@@ -80,65 +81,83 @@ def build_from_dataset(dataset_str: str, seed: int):
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
-    # from torchvision.transforms.functional import to_pil_image
-    # for i in range(3):
-    #     image = to_pil_image(X[i])
-    #     image.save(f'images/tmp-svhn-{dataset_str}-{i}.png')
-    # breakpoint()
-
     class_data = defaultdict(list)
-    for i in range(len(X)):
-        class_data[Y[i].item()].append(X[i])
+    for target in range(len(X)):
+        class_data[Y[target].item()].append(X[target])
 
     mus = {
         key: torch.stack(data).float().mean(dim=0) for key, data in class_data.items()
     }
 
     print("Generating mean shifted data...")
-    shifted_data = []
-    labels = []
-    original_labels = []
+    X = []
+    Y = []
+    prev_Y = []
     for label, data in tqdm(class_data.items()):
         targets = {i: mu for i, mu in mus.items() if i != label}
         
-        for i, mu in targets.items():
+        for target, mu in targets.items():
             shifted = bounded_shift(torch.stack(data), mu, bounds=(0., 1.))
-            labels.extend([i] * len(data))
-            original_labels.extend([label] * len(data))
-            shifted_data.append(shifted)
+            Y.extend([target] * len(data))
+            prev_Y.extend([label] * len(data))
+            X.append(shifted)
     
     data_dict = {
-        'pixel_values': torch.cat(shifted_data),
-        'original': torch.tensor(original_labels),
-        'label': torch.tensor(labels)
+        'pixel_values': torch.cat(X),
+        'original': torch.tensor(prev_Y),
+        'label': torch.tensor(Y)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/shifted-{dataset_str}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/vision-data/shifted-{dataset_str.replace("/", "--")}.hf')
 
-    print("Generating maximum entropy data...")
-    dd_data = []
-    labels = []
+    print("Generating Dury distribution maximum entropy data...")
+    X = []
+    Y = []
     for label, original_data in tqdm(class_data.items()):
         mu = mus[label].numpy()
         dd = DuryDistribution(mu)
         data = dd.sample(len(original_data))
-        dd_data.append(torch.tensor(data, dtype=torch.float))
-        labels.extend([label] * len(original_data))
+        X.append(torch.tensor(data, dtype=torch.float))
+        Y.extend([label] * len(original_data))
     
     data_dict = {
-        'pixel_values': torch.cat(dd_data),
-        'label': torch.tensor(labels)
+        'pixel_values': torch.cat(X),
+        'label': torch.tensor(Y)
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/shifted-data/max-entropy-{dataset_str}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/vision-data/max-entropy-{dataset_str.replace("/", "--")}.hf')
 
+    print("Generating truncated normal maximum entropy data...")
+    # Use train dataset to stabilize sampling
+    train_data = ds["train"].with_transform(preprocess)
+    with train_data.formatted_as("torch"):
+        X = assert_type(Tensor, train_data[img_col]).div(255)
+        X = rearrange(X, "n h w c -> n c h w")
+        Y = assert_type(Tensor, train_data[label_col])
+ 
+    train_class_data = defaultdict(list)
+    for target in range(len(X)):
+        train_class_data[Y[target].item()].append(X[target])
+
+    X = []
+    Y = []
+    for label, data in tqdm(train_class_data.items()):
+        sigma = torch.stack(data).float().flatten(1, 3).T.cov()
+        sample = truncated_normal(len(data), torch.stack(data).float().mean(dim=0).flatten(), sigma, seed=seed)
+        X.append(sample.reshape(len(data), *data[0].shape))
+        Y.extend([label] * len(data))
+    
+    data_dict = {
+        'pixel_values': torch.cat(X),
+        'label': torch.tensor(Y)
+    }
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(f'/mnt/ssd-1/lucia/vision-data/truncated-normal-{dataset_str.replace("/", "--")}.hf')
 
 def main():
     datasets = [
-        # "cifar10", 
+        "cifar10", 
         "svhn:cropped_digits", 
-        # "mnist",
-        # "evanarlian/imagenet_1k_resized_256", 
-        # "fashion_mnist",
-        # "cifarnet",
+        "mnist",
+        "fashion_mnist",
+        "EleutherAI/cifarnet",
     ]
     for dataset in datasets:
         build_from_dataset(dataset, seed=0)

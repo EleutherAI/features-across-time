@@ -85,15 +85,15 @@ def plot(
 
     ot_col_names = {
         "cqn": "1st order (CQN)",
-        "shifted": "1st order (hypercube)",
+        "shifted": "1st order (Bounded shift)",
         "got": "2nd order (Gaussian OT)",
         "real": "Val. set",
     }
     maxent_col_names = {
         "independent": "1st order (ICS)",
-        "maxent": "1st order (hypercube)",
+        "maxent": "1st order (Dury)",
         "gaussian": "2nd order (Gaussian)",
-        # "truncated_normal": "2nd order (truncated normal)",
+        # "truncated_normal": "2nd order (Truncated normal)",
         "real": "Val. set",
     }
 

@@ -114,7 +114,7 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
             pickle.dump(editor, f)
 
     ds_variations = {
-        "maxent": load_from_disk(data_path / f'max-entropy-{dataset_str}.hf'),
+        "maxent": load_from_disk(data_path / f'dury-{dataset_str}.hf'),
         "shifted": load_from_disk(data_path / f'shifted-{dataset_str}.hf'),
         "truncated_normal": load_from_disk(data_path / f'truncated-normal-{dataset_str}.hf'),
         "real": val,
@@ -166,6 +166,7 @@ def run_model(
     checkpoint: int,
     batch_sizes: dict[str, int]
 ) -> list[dict]:  
+    device = "cuda:7"
     model_path = os.path.join(models_path, ds_str)
     assert os.path.isdir(model_path)
 
@@ -276,7 +277,7 @@ def run_model(
 
             arch_data[f"{ds_name}_loss"] = running_mean_loss
             arch_data[f"{ds_name}_accuracy"] = true_pred_count / len(ds)
-            print(ds_name, arch_data[f"{ds_name}_accuracy"], running_mean_loss)
+            print(ds_name, model_arch, running_mean_loss, true_pred_count / len(ds))
         data.append(arch_data)
 
     return data
@@ -284,9 +285,8 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
-    grayscale = False
     with open('/mnt/ssd-1/lucia/features-across-time/batch_sizes.yaml', 'r') as f:
-        batch_sizes = yaml.safe_load(f)['A40']
+        batch_sizes = yaml.safe_load(f)['A40-fashion-mnist']
 
     parser = ArgumentParser()
     parser.add_argument("--datasets", type=str, default=[
@@ -311,6 +311,7 @@ if __name__ == "__main__":
     
     data_dicts = []
     for dataset in args.datasets:
+        grayscale = dataset in ["mnist", "fashion_mnist"]
         data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, args.data, batch_sizes, grayscale)
         df = pd.DataFrame(data_dict)
         df.to_csv(Path(args.sink) / f'vision-{dataset}{"-grayscale" if grayscale else ""}.csv', index=False)

@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 import yaml
 import pickle
-
+import math
 from tqdm import tqdm
 import safetensors
 import numpy as np
@@ -119,7 +119,7 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
     ds_variations = {
         "maxent": load_from_disk(data_path / f'dury-{dataset_str.replace("/", "--")}.hf'),
         "shifted": load_from_disk(data_path / f'shifted-{dataset_str.replace("/", "--")}.hf'),
-        "truncated_normal": load_from_disk(data_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf'),
+        "truncated_normal": load_from_disk(data_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf').select(range(len(val))),
         "real": val,
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),

@@ -53,17 +53,6 @@ def main(debug: bool, data_path = Path.cwd() / '24-05-22', images_path = Path.cw
         grayscale = "-grayscale" if (dataset_str == "mnist" or dataset_str == "fashion_mnist") else ""
         df = pd.read_csv(data_path / f'vision-{dataset_str}{grayscale}.csv')
 
-        if dataset_str == "svhn:cropped_digits":
-            df_svhn_convnext = pd.read_csv(data_path / f'vision-convnext-{dataset_str}.csv')
-            df_svhn_swin = pd.read_csv(data_path / f'vision-swin-{dataset_str}.csv')
-            condition = (df['ds'] == "svhn:cropped_digits") & (df['net'] == "convnext")
-            condition_svhn = (df_svhn_convnext['ds'] == "svhn:cropped_digits") & (df_svhn_convnext['net'] == "convnext")
-            df.loc[condition, df.columns] = df_svhn_convnext.loc[condition_svhn, df.columns].values
-            condition_svhn_swin = (df_svhn_swin['ds'] == "svhn:cropped_digits") & (df_svhn_swin['net'] == "swin")
-            condition = (df['ds'] == "svhn:cropped_digits") & (df['net'] == "swin")
-            df.loc[condition, df.columns] = df_svhn_swin.loc[condition_svhn_swin, df.columns].values
-            df.to_csv('tmp.csv')
-
         df["pretty_net"] = df["net"].map(dict(zip(model_metadata[::2], model_metadata[1::2])))
         df = df[df['ds'] == dataset_str]
         

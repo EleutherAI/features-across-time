@@ -10,8 +10,8 @@ def test_dury_distribution():
 
     assert np.all(np.isfinite(samples))
     assert np.allclose(samples.mean(0), mu, atol=9e-3)
+    assert np.all(samples <= 1.0) and np.all(samples >= 0.0)
 
 
 if __name__ == "__main__":
     test_dury_distribution()
-    

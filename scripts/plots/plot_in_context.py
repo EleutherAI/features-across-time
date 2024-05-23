@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import base_2_log_ticks, hex_to_rgba, write_garbage
+from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
 from plotly.subplots import make_subplots
 
 from script_utils.experiment import Experiment
@@ -23,7 +23,7 @@ def add_steps(df, supplementary_path):
 
 def main(debug: bool, experiment: Experiment):
     if not debug:
-        write_garbage()
+        kaleido_workaround()
 
     os.makedirs(Path.cwd() / "images", exist_ok=True)
     image_name = Path.cwd() / "images" / f"in-context-{experiment.team}--{experiment.model_name}.pdf"

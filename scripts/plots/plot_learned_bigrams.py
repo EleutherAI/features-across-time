@@ -10,7 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scripts.script_utils.divergences import kl_divergence
-from scripts.plots.plot_ngram import write_garbage, base_2_log_ticks, hex_to_rgba
+from scripts.plots.plot_ngram import kaleido_workaround, base_2_log_ticks, hex_to_rgba
 
 def plot(
     df: pd.DataFrame, image_name: str, debug: bool, model_series: str, qualitative=False
@@ -18,7 +18,7 @@ def plot(
     print("plot")
     # df = df[df['step'] != 0] #  Step = 0 gives final step, which we collect elsewhere
     if not debug:
-        write_garbage()
+        kaleido_workaround()
 
     bpb_coefficient = 0.3650388
 

@@ -21,7 +21,7 @@ def add_kl_data(df, supplementary_path):
     return df
 
 
-def write_garbage():
+def kaleido_workaround():
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
     with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
         fig = px.scatter(x=[0], y=[0])
@@ -46,7 +46,7 @@ def plot_bpb_and_divergences(
 ):
     df = df[df['step'] != 0] # Step = 0 gives final step, which we collect elsewhere
     if not debug:
-        write_garbage()
+        kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388

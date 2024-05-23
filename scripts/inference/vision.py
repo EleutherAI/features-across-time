@@ -59,7 +59,7 @@ def map_cifarnet(ex):
     return ex
 
 
-def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: str, batch_sizes: dict, grayscale: bool):
+def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: str, grayscale: bool):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
@@ -115,6 +115,11 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
 
         with open(cache, "wb") as f:
             pickle.dump(editor, f)
+
+    with val.formatted_as("torch"):
+        X = assert_type(Tensor, val[img_col]).div(255)
+        X = rearrange(X, "n h w c -> n c h w")
+        Y = assert_type(Tensor, val[label_col])
 
     ds_variations = {
         "maxent": load_from_disk(data_path / f'dury-{dataset_str.replace("/", "--")}.hf'),
@@ -264,12 +269,11 @@ def run_model(
             "net": net_str,
             "arch": model_arch
         }
-        batch_size = 512 if model_arch not in batch_sizes else batch_sizes[model_arch]
 
         for ds_name, ds in ds_variations.items():
             running_mean_loss = 0.0
             true_pred_count = 0.0
-            dataloader = DataLoader(ds, batch_size=batch_size, drop_last=True)
+            dataloader = DataLoader(ds, batch_size=512, drop_last=True)
             for batch in dataloader:
                 labels = batch["label"].cuda()
                 output = model(batch["pixel_values"].cuda(), labels)
@@ -287,8 +291,6 @@ def run_model(
 
 if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
-    with open(Path.cwd() / 'batch_sizes.yaml', 'r') as f:
-        batch_sizes = yaml.safe_load(f)['A40-fashion-mnist']
 
     parser = ArgumentParser()
     parser.add_argument("--datasets", type=str, default=[
@@ -314,6 +316,6 @@ if __name__ == "__main__":
     data_dicts = []
     for dataset in args.datasets:
         grayscale = dataset in ["mnist", "fashion_mnist"]
-        data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, args.data, batch_sizes, grayscale)
+        data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, args.data, grayscale)
         df = pd.DataFrame(data_dict)
-        df.to_csv(Path(args.sink) / f'vision-{dataset.replace("/", "--")}{"-grayscale" if grayscale else ""}.csv', index=False)
+        df.to_csv(Path(args.sink) / f'vision-{args.nets}-{dataset.replace("/", "--")}{"-grayscale" if grayscale else ""}.csv', index=False)

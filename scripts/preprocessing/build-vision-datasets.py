@@ -1,6 +1,9 @@
 import random
 from collections import defaultdict
 from pathlib import Path
+from argparse import ArgumentParser
+import os
+
 import numpy as np
 import torch
 import torchvision.transforms.functional as TF
@@ -45,6 +48,8 @@ def bounded_shift(
 
 
 def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
+    os.makedirs(output_path, exist_ok=True)
+
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
@@ -153,16 +158,20 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
     Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf')
 
 def main():
-    datasets = [
-        "cifar10", 
-        "svhn:cropped_digits", 
-        "mnist",
-        "fashion_mnist",
-        "EleutherAI/cifarnet",
-    ]
-    for dataset in datasets:
-        output_path = Path.cwd() / 'vision-data'
-        build_from_dataset(dataset, output_path, seed=0)
+    parser = ArgumentParser()
+    parser.add_argument("--datasets", type=str, default=[
+            "cifar10", 
+            "svhn:cropped_digits", 
+            "mnist", 
+            "fashion_mnist",
+            "EleutherAI/cifarnet"
+        ], nargs="+")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed")
+    parser.add_argument("--output", type=str, default=Path.cwd() / 'data', help="Path to directory containing output data")
+    args = parser.parse_args()
+
+    for dataset in args.datasets:
+        build_from_dataset(dataset, args.output, args.seed)
 
 
 if __name__ == "__main__":

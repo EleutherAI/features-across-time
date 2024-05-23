@@ -5,7 +5,6 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-import yaml
 
 import numpy as np
 import torch

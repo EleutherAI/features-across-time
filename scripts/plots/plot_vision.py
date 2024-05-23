@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import math
 import torch
+from argparse import ArgumentParser
 
 import numpy as np
 import pandas as pd
@@ -10,24 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datasets import load_from_disk
 
-from scripts.plots.plot_ngram import write_garbage, base_2_log_ticks, hex_to_rgba
+from scripts.plots.plot_ngram import kaleido_workaround, base_2_log_ticks, hex_to_rgba
 
-marker_series = [
-    "circle",
-    "square",
-    "diamond",
-    "cross",
-    "x",
-    "triangle-up",
-    "triangle-down",
-    "triangle-left",
-    "triangle-right",
-    "pentagon",
-    "hexagon",
-    "octagon",
-    "star",
-    "hexagram",
-]
 
 def num_classes(dataset_str: str):
     ds = load_from_disk(Path.cwd() / 'vision-data' / f'dury-{dataset_str}.hf')
@@ -35,7 +20,7 @@ def num_classes(dataset_str: str):
     return len(torch.unique(ds['label']))
 
 
-def main(debug: bool, data_path = Path.cwd() / '24-05-22', images_path = Path.cwd() / 'images'):
+def main(data_path: str, images_path: str):
     os.makedirs(images_path, exist_ok=True)
     
     for dataset_str, pretty_dataset_str in [
@@ -56,18 +41,13 @@ def main(debug: bool, data_path = Path.cwd() / '24-05-22', images_path = Path.cw
         df["pretty_net"] = df["net"].map(dict(zip(model_metadata[::2], model_metadata[1::2])))
         df = df[df['ds'] == dataset_str]
         
-        plot(dataset_str, pretty_dataset_str, df, images_path, debug)
+        plot(dataset_str, pretty_dataset_str, df, images_path)
 
 
 def plot(
-    dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_path: str, debug: bool
+    dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_path: str
 ):
-    if not debug:
-        write_garbage()
-
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
-    uniform_random_loss = math.log(num_classes(dataset_str))
-    uniform_random_accuracy = (1 / num_classes(dataset_str))
+    kaleido_workaround()
 
     ot_col_names = {
         "cqn": "1st order (CQN)",
@@ -79,9 +59,13 @@ def plot(
         "independent": "1st order (ICS)",
         "maxent": "1st order (Dury)",
         "gaussian": "2nd order (Gaussian)",
-        # "truncated_normal": "2nd order (Truncated normal)",
+        "truncated_normal": "2nd order (Truncated normal)",
         "real": "Val. set",
     }
+
+    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
+    uniform_random_loss = math.log(num_classes(dataset_str))
+    uniform_random_accuracy = 1 / num_classes(dataset_str)
 
     for col_dict, intervention in [
             (ot_col_names, "Optimal transport"), 
@@ -112,7 +96,7 @@ def plot(
                             x=model_df[model_df["arch"] == model_df["arch"].unique()[0]]["step"],
                             y=mean_measure_per_step,
                             mode="lines+markers",
-                            marker=dict(size=5, symbol=marker_series[0]),
+                            marker=dict(size=5, symbol="circle"),
                             name=legend_name,
                             line=dict(color=opaque_color),
                             showlegend=col_idx==df["net"].nunique() - 1 and row_idx == 0,
@@ -205,4 +189,9 @@ def plot(
 
 
 if __name__ == "__main__":
-    main(debug = False)
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default=Path.cwd() / '24-05-24')
+    parser.add_argument("--images_path", type=str, default=Path.cwd() / 'images')
+    args = parser.parse_args()
+
+    main(args.data_path, args.images_path)

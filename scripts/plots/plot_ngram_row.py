@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import add_kl_data, base_2_log_ticks, hex_to_rgba, write_garbage
+from plot_ngram import add_kl_data, base_2_log_ticks, hex_to_rgba, kaleido_workaround
 from plotly.subplots import make_subplots
 
 
@@ -16,7 +16,7 @@ def plot_loss_and_divergences(
     qualitative=False,
 ):
     if not debug:
-        write_garbage()
+        kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
     bpb_coefficient = 0.3650388

@@ -61,16 +61,16 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
     kaleido_workaround()
 
     optimal_transport_col_names = {
-        "cqn": "1st order (CQN)",
-        "shifted": "1st order (Bounded shift)",
-        "got": "2nd order (Gaussian OT)",
+        "cqn": "1<sup>st</sup> order (CQN)",
+        "shifted": "1<sup>st</sup> order (Bounded shift)",
+        "got": "2<sup>nd</sup> order (Gaussian OT)",
         "real": "Val. set",
     }
     maxent_col_names = {
-        "independent": "1st order (ICS)",
-        "maxent": "1st order (Dury)",
-        "gaussian": "2nd order (Gaussian)",
-        "truncated_normal": "2nd order (Truncated normal)",
+        "independent": "1<sup>st</sup> order (ICS)",
+        "maxent": "1<sup>st</sup> order (Dury)",
+        "gaussian": "2<sup>nd</sup> order (Gaussian)",
+        "truncated_normal": "2<sup>nd</sup> order (Truncated normal)",
         "real": "Val. set",
     }
 
@@ -216,6 +216,119 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
             / f'vision-{dataset_str.replace("/", "--")}-{intervention_name}.pdf',
             format="pdf",
         )
+
+        if dataset_str == "cifar10":
+            fig = make_subplots(
+                rows=1,
+                cols=df["net"].nunique(),
+                shared_xaxes=True,
+                shared_yaxes=True,
+                subplot_titles=df["pretty_net"].unique(),
+                horizontal_spacing=0.02,
+                vertical_spacing=0.04,
+            )
+            for col_idx, model in enumerate(df["net"].unique()):
+                model_df = df[df["net"] == model]
+
+                for j, (col_name, legend_name) in enumerate(col_dict.items()):
+                    opaque_color = (
+                        px.colors.qualitative.Plotly[j]
+                        if col_name != "real"
+                        else "#000000"
+                    )
+                    transparent_color = hex_to_rgba(opaque_color, opacity=0.17)
+
+                    # Add mean line over model architecture
+                    mean_measure_per_step = model_df.groupby("step")[
+                        f"{col_name}_accuracy"
+                    ].mean()
+                    fig.add_trace(
+                        go.Scatter(
+                            x=model_df[
+                                model_df["arch"] == model_df["arch"].unique()[0]
+                            ]["step"],
+                            y=mean_measure_per_step,
+                            mode="lines+markers",
+                            marker=dict(size=5, symbol="circle"),
+                            name=legend_name,
+                            line=dict(color=opaque_color),
+                            showlegend=col_idx == 0,
+                        ),
+                        row=1,
+                        col=col_idx + 1,
+                    )
+
+                    for arch in model_df["arch"].unique():
+                        arch_df = model_df[model_df["arch"] == arch]
+
+                        fig.add_trace(
+                            go.Scatter(
+                                x=arch_df["step"],
+                                y=arch_df[f"{col_name}_accuracy"],
+                                mode="lines",
+                                line=dict(color=transparent_color),
+                                showlegend=False,
+                            ),
+                            row=1,
+                            col=col_idx + 1,
+                        )
+
+                # Indicate baseline loss and accuracies
+                fig.add_shape(
+                    row=1,
+                    col=col_idx + 1,
+                    type="line",
+                    x0=1,
+                    y0=uniform_random_accuracy,
+                    x1=2**16,
+                    y1=uniform_random_accuracy,
+                    line=dict(color="black", width=2, dash="dash"),
+                )
+
+            fig.update_layout(
+                width=1100,
+                height=400,
+                legend=dict(
+                    x=0.43,
+                    y=0.9,
+                    xanchor="center",
+                    yanchor="top",
+                    font=dict(size=8),
+                    bgcolor="rgba(255, 255, 255, 0.85)",
+                ),
+                margin=dict(l=20, r=20, t=50, b=20),
+            )
+            fig.update_xaxes(
+                title_text="", type="log", tickvals=tick_values, ticktext=tick_texts
+            )
+
+            fig.update_yaxes(row=1, range=[0, 1])
+            fig.update_yaxes(
+                row=1,
+                col=1,
+                tickvals=y_ticks,
+                ticktext=ticktext,
+                title_text="Accuracy",
+                tickformat=".0%",
+                title_font=dict(size=10),
+                title_standoff=10,
+            )
+
+            fig.add_annotation(
+                dict(
+                    text="Training steps",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=-0.15,
+                    showarrow=False,
+                    font=dict(size=14),
+                )
+            )
+            fig.write_image(
+                images_path / f"vision-cifar10-accuracy-{intervention_name}.pdf",
+                format="pdf",
+            )
 
 
 if __name__ == "__main__":

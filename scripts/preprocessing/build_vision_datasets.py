@@ -1,17 +1,17 @@
+import os
 import random
+from argparse import ArgumentParser
 from collections import defaultdict
 from pathlib import Path
-from argparse import ArgumentParser
-import os
 
 import numpy as np
 import torch
 import torchvision.transforms.functional as TF
+from concept_erasure.utils import assert_type
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
+from einops import rearrange
 from torch import Tensor
 from tqdm import tqdm
-from einops import rearrange
-from concept_erasure.utils import assert_type
 
 from scripts.script_utils.dury_distribution import DuryDistribution
 from scripts.script_utils.truncated_normal import truncated_normal
@@ -28,10 +28,9 @@ def infer_columns(feats: Features) -> tuple[str, str]:
     return img_cols[0], label_cols[0]
 
 
-def bounded_shift(
-    x: Tensor, target: Tensor, bounds=(0., 1.), max_iter: int = 10_000
-):
-    """Shift the elements of `x` s.t. their mean is `target` while keeping them within `bounds`."""
+def bounded_shift(x: Tensor, target: Tensor, bounds=(0.0, 1.0), max_iter: int = 10_000):
+    """Shift the elements of `x` s.t. their mean is `target`
+    while keeping them within `bounds`."""
     # Initial centroid
     mu = x.mean(dim=0)
 
@@ -101,19 +100,21 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
     prev_Y = []
     for label, data in tqdm(class_data.items()):
         targets = {i: mu for i, mu in mus.items() if i != label}
-        
+
         for target, mu in targets.items():
-            shifted = bounded_shift(torch.stack(data), mu, bounds=(0., 1.))
+            shifted = bounded_shift(torch.stack(data), mu, bounds=(0.0, 1.0))
             Y.extend([target] * len(data))
             prev_Y.extend([label] * len(data))
             X.append(shifted)
-    
+
     data_dict = {
-        'pixel_values': torch.cat(X),
-        'original': torch.tensor(prev_Y),
-        'label': torch.tensor(Y)
+        "pixel_values": torch.cat(X),
+        "original": torch.tensor(prev_Y),
+        "label": torch.tensor(Y),
     }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'shifted-{dataset_str.replace("/", "--")}.hf')
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
+        output_path / f'shifted-{dataset_str.replace("/", "--")}.hf'
+    )
 
     print("Generating Dury distribution maximum entropy data...")
     X = []
@@ -124,12 +125,11 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         data = dd.sample(len(original_data))
         X.append(torch.tensor(data, dtype=torch.float))
         Y.extend([label] * len(original_data))
-    
-    data_dict = {
-        'pixel_values': torch.cat(X),
-        'label': torch.tensor(Y)
-    }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'dury-{dataset_str.replace("/", "--")}.hf')
+
+    data_dict = {"pixel_values": torch.cat(X), "label": torch.tensor(Y)}
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
+        output_path / f'dury-{dataset_str.replace("/", "--")}.hf'
+    )
 
     print("Generating truncated normal maximum entropy data...")
     # Use train dataset to stabilize sampling
@@ -138,7 +138,7 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         X = assert_type(Tensor, train_data[img_col]).div(255)
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, train_data[label_col])
- 
+
     train_class_data = defaultdict(list)
     for target in range(len(X)):
         train_class_data[Y[target].item()].append(X[target])
@@ -147,27 +147,39 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
     Y = []
     for label, data in tqdm(train_class_data.items()):
         sigma = torch.stack(data).float().flatten(1, 3).T.cov()
-        sample = truncated_normal(len(data), torch.stack(data).float().mean(dim=0).flatten(), sigma, seed=seed)
+        sample = truncated_normal(
+            len(data), torch.stack(data).float().mean(dim=0).flatten(), sigma, seed=seed
+        )
         X.append(sample.reshape(len(data), *data[0].shape))
         Y.extend([label] * len(data))
-    
-    data_dict = {
-        'pixel_values': torch.cat(X),
-        'label': torch.tensor(Y)
-    }
-    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(output_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf')
+
+    data_dict = {"pixel_values": torch.cat(X), "label": torch.tensor(Y)}
+    Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
+        output_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf'
+    )
+
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--datasets", type=str, default=[
-            "cifar10", 
-            "svhn:cropped_digits", 
-            "mnist", 
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        default=[
+            "cifar10",
+            "svhn:cropped_digits",
+            "mnist",
             "fashion_mnist",
-            "EleutherAI/cifarnet"
-        ], nargs="+")
+            "EleutherAI/cifarnet",
+        ],
+        nargs="+",
+    )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--output", type=str, default=Path.cwd() / 'data', help="Path to directory containing output data")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=Path.cwd() / "data",
+        help="Path to directory containing output data",
+    )
     args = parser.parse_args()
 
     for dataset in args.datasets:

@@ -20,7 +20,7 @@ from transformers import AutoTokenizer
 
 def build_bigrams(tokens_path: Path, bigrams_path: Path):
     # tokens = np.array([1, 2, 3], dtype=np.uint16)
-    tokens = np.memmap(tokens_path, dtype=np.uint16, mode="r")[:1_000_000]
+    tokens = np.memmap(tokens_path, dtype=np.uint16, mode="r")
     bigrams = (
         np.lib.stride_tricks.sliding_window_view(tokens, 2).view(np.uint32).squeeze()
     )

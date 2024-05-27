@@ -317,8 +317,8 @@ def plot_model_sizes(debug: bool):
         dfs.append(model_df)
 
         # trigram_df = pd.read_csv(
-        #     Path.cwd() / 
-        #     "output" / 
+        #     Path.cwd() /
+        #     "output" /
         #     f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
         # )
         # dfs.append(trigram_df)

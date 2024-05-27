@@ -12,12 +12,12 @@ from transformers import AutoTokenizer
 
 def bpb_ratio(data):
     """
-    Compute the ratio used to convert loss from nats per token to bits per 
-    utf-8 encoded byte. 
+    Compute the ratio used to convert loss from nats per token to bits per
+    utf-8 encoded byte.
     Loss in nats to loss in bits: loss = log_2(exp(loss))
     Loss per token to loss per byte: loss *= (total_tokens / total_bytes)
 
-    total_tokens / total_bytes * log2(exp(loss)) = 
+    total_tokens / total_bytes * log2(exp(loss)) =
         loss * (total_tokens / total_bytes / ln(2))
     """
     total_bytes: float = sum(data["bytes"])

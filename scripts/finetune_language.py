@@ -51,7 +51,7 @@ class LossLoggingCallback(TrainerCallback):
     def on_log(self, args, state, control, logs=None, **kwargs):
         gpu_rank = int(os.environ.get("LOCAL_RANK", "0"))
         if "loss" in logs:
-            print(  
+            print(
                 f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}"
             )
         if "eval_loss" in logs:

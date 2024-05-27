@@ -132,7 +132,7 @@ class NgramSeqModel:
             shape=(num_iters * batch * (self.seq_len - 1), vocab_size),
         )
         for i in tqdm(range(num_iters)):
-            # dists are compared with logits. there are logits for all positions. 
+            # dists are compared with logits. there are logits for all positions.
             # however there are no logits between chunks
             ngram_prefixes = []
             tokens_batch = next(pile)["input_ids"]

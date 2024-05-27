@@ -1,25 +1,37 @@
 import os
+import pickle
 import random
 from argparse import ArgumentParser
 from pathlib import Path
-import yaml
-import pickle
-import math
-from tqdm import tqdm
-import safetensors
+
 import numpy as np
 import pandas as pd
+import safetensors
 import torch
 import torchvision.transforms.functional as TF
-from datasets import ClassLabel, Features, Image, DatasetDict, load_dataset, load_from_disk
-from torch import Tensor, nn
-from transformers.modeling_outputs import ModelOutput
-from torch.utils.data import DataLoader
-from einops import rearrange
-from scripts.train_vision import IndependentCoordinateSampler, ConceptEditedDataset, QuantileNormalizedDataset, GaussianMixture
 from concept_erasure import QuadraticFitter
 from concept_erasure.quantile import QuantileNormalizer
 from concept_erasure.utils import assert_type
+from datasets import (
+    ClassLabel,
+    DatasetDict,
+    Features,
+    Image,
+    load_dataset,
+    load_from_disk,
+)
+from einops import rearrange
+from torch import Tensor, nn
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers.modeling_outputs import ModelOutput
+
+from scripts.train_vision import (
+    ConceptEditedDataset,
+    GaussianMixture,
+    IndependentCoordinateSampler,
+    QuantileNormalizedDataset,
+)
 
 
 class HfWrapper(nn.Module):
@@ -47,19 +59,13 @@ def infer_columns(feats: Features) -> tuple[str, str]:
 
 
 def to_grayscale(ex):
-    ex['pixel_values'] = ex['pixel_values'][:1, :, :].repeat(3, 1, 1).float()
+    ex["pixel_values"] = ex["pixel_values"][:1, :, :].repeat(3, 1, 1).float()
     return ex
 
 
-def map_cifarnet(ex):
-    if ex['pixel_values'].dim() == 1:
-        side_len = int(math.sqrt(len(ex['pixel_values']) / 3))
-        ex['pixel_values'] = ex['pixel_values'].reshape(side_len, 3, side_len) 
-    ex['pixel_values'] = ex['pixel_values'].permute(1, 0, 2)
-    return ex
-
-
-def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: str, grayscale: bool):
+def run_dataset(
+    dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: str
+):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
@@ -88,10 +94,10 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
     print("Done.")
 
     def preprocess(ex):
-        ex['pixel_values'] = TF.to_tensor(ex[img_col])
-        ex['label'] = torch.tensor(ex[label_col])
+        ex["pixel_values"] = TF.to_tensor(ex[img_col])
+        ex["label"] = torch.tensor(ex[label_col])
         return ex
-    
+
     if val := ds.get("validation"):
         val = val.map(preprocess)
     else:
@@ -121,10 +127,14 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
+    dataset_file_str = dataset_str.replace("/", "--")
+    truncated_normal = load_from_disk(
+        data_path / f"truncated-normal-{dataset_file_str}.hf"
+    ).select(range(len(val)))
     ds_variations = {
-        "maxent": load_from_disk(data_path / f'dury-{dataset_str.replace("/", "--")}.hf'),
-        "shifted": load_from_disk(data_path / f'shifted-{dataset_str.replace("/", "--")}.hf'),
-        "truncated_normal": load_from_disk(data_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf').select(range(len(val))),
+        "maxent": load_from_disk(data_path / f"dury-{dataset_file_str}.hf"),
+        "shifted": load_from_disk(data_path / f"shifted-{dataset_file_str}.hf"),
+        "truncated_normal": truncated_normal,
         "real": val,
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
@@ -133,17 +143,16 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
     }
 
     for ds_name in ["maxent", "shifted", "real", "truncated_normal"]:
-        ds_variations[ds_name].set_format('torch', columns=['pixel_values', label_col])
-    
-    if dataset_str == "EleutherAI/cifarnet":
-        for ds_name in ["maxent", "shifted", "truncated_normal"]:
-            ds_variations[ds_name] = ds_variations[ds_name].map(map_cifarnet)
-    if grayscale:
+        ds_variations[ds_name].set_format("torch", columns=["pixel_values", label_col])
+
+    if dataset_str == "mnist" or dataset_str == "fashion_mnist":
         for ds_name in ["maxent", "shifted", "truncated_normal"]:
             ds_variations[ds_name] = ds_variations[ds_name].map(to_grayscale)
 
     num_unique_labels = len(torch.unique(next(iter(ds_variations.values()))[label_col]))
-    checkpoints = np.unique(2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)).tolist()
+    checkpoints = np.unique(
+        2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)
+    ).tolist()
     data_dicts = []
 
     with tqdm(total=len(nets) * len(checkpoints)) as pbar:
@@ -157,11 +166,10 @@ def run_dataset(dataset_str: str, nets: list[str], seed: int, models_path: str, 
                         num_unique_labels,
                         models_path,
                         checkpoint,
-                        batch_sizes
                     )
                 )
                 pbar.update(1)
-    
+
     return data_dicts
 
 
@@ -172,18 +180,18 @@ def run_model(
     num_classes: int,
     models_path: str,
     checkpoint: int,
-    batch_sizes: dict[str, int]
-) -> list[dict]:  
+) -> list[dict]:
     model_path = os.path.join(models_path, ds_str)
     assert os.path.isdir(model_path)
 
     model_archs = [
-        name for name in os.listdir(model_path) 
+        name
+        for name in os.listdir(model_path)
         if os.path.isdir(os.path.join(model_path, name)) and name.startswith(net_str)
     ]
     model_paths = [
-        os.path.join(model_path, name, f'checkpoint-{checkpoint}') 
-        for name in os.listdir(model_path) 
+        os.path.join(model_path, name, f"checkpoint-{checkpoint}")
+        for name in os.listdir(model_path)
         if os.path.isdir(os.path.join(model_path, name)) and name.startswith(net_str)
     ]
 
@@ -192,7 +200,10 @@ def run_model(
         match model_arch.partition("-"):
             case ("convnext", _, arch):
                 from transformers import ConvNextV2ForImageClassification
-                model = ConvNextV2ForImageClassification.from_pretrained(model_path).cuda()
+
+                model = ConvNextV2ForImageClassification.from_pretrained(
+                    model_path
+                ).cuda()
             case ("regnet", _, arch):
                 from torchvision.models import (
                     regnet_y_1_6gf,
@@ -216,7 +227,8 @@ def run_model(
 
                 net.stem[0].stride = (1, 1)  # type: ignore
                 model = HfWrapper(net)
-                model.load_state_dict(safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors')))
+                state_dict_path = os.path.join(model_path, "model.safetensors")
+                model.load_state_dict(safetensors.torch.load_file(state_dict_path))
                 model.cuda()
 
             case ("swin", _, arch):
@@ -258,7 +270,8 @@ def run_model(
                     downsample_layer=PatchMergingV2,
                 )
                 model = HfWrapper(swin)
-                model.load_state_dict(safetensors.torch.load_file(os.path.join(model_path, 'model.safetensors')))
+                state_dict_path = os.path.join(model_path, "model.safetensors")
+                model.load_state_dict(safetensors.torch.load_file(state_dict_path))
                 model.cuda()
             case _:
                 raise ValueError(f"Unknown model {model_arch}")
@@ -267,7 +280,7 @@ def run_model(
             "step": checkpoint,
             "ds": ds_str,
             "net": net_str,
-            "arch": model_arch
+            "arch": model_arch,
         }
 
         for ds_name, ds in ds_variations.items():
@@ -278,7 +291,7 @@ def run_model(
                 labels = batch["label"].cuda()
                 output = model(batch["pixel_values"].cuda(), labels)
 
-                running_mean_loss += (output.loss.item() / len(dataloader))
+                running_mean_loss += output.loss.item() / len(dataloader)
                 true_pred_count += output.logits.argmax(dim=-1).eq(labels).sum().item()
 
             arch_data[f"{ds_name}_loss"] = running_mean_loss
@@ -293,29 +306,54 @@ if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
 
     parser = ArgumentParser()
-    parser.add_argument("--datasets", type=str, default=[
-            "cifar10", 
-            "svhn:cropped_digits", 
-            "mnist", 
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        default=[
+            "cifar10",
+            "svhn:cropped_digits",
+            "mnist",
             "fashion_mnist",
-            "EleutherAI/cifarnet"
-        ], nargs="+")
+            "EleutherAI/cifarnet",
+        ],
+        nargs="+",
+    )
     parser.add_argument(
         "--nets",
         type=str,
         choices=("convnext", "regnet", "swin", "vit"),
         nargs="+",
-        default=["convnext", "regnet", "swin", "vit"]
+        default=["convnext", "regnet", "swin", "vit"],
     )
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--data", type=str, default=Path.cwd() / "vision-data", help="Path to directory containing locally modified datasets")
-    parser.add_argument("--checkpoints", type=str, default=Path.cwd() / "img-ckpts", help="Path to directory containing model checkpoints")
-    parser.add_argument("--sink", type=str, default=Path.cwd() / '24-05-23', help="Path to directory containing output CSVs")
+    parser.add_argument(
+        "--data",
+        type=str,
+        default=Path.cwd() / "vision-data",
+        help="Path to directory containing local datasets",
+    )
+    parser.add_argument(
+        "--checkpoints",
+        type=str,
+        default=Path.cwd() / "img-ckpts",
+        help="Path to directory containing model checkpoints",
+    )
+    parser.add_argument(
+        "--sink",
+        type=str,
+        default=Path.cwd() / "24-05-23",
+        help="Path to directory containing output data",
+    )
     args = parser.parse_args()
-    
+
     data_dicts = []
     for dataset in args.datasets:
-        grayscale = dataset in ["mnist", "fashion_mnist"]
-        data_dict = run_dataset(dataset, args.nets, args.seed, args.checkpoints, args.data, grayscale)
+        data_dict = run_dataset(
+            dataset, args.nets, args.seed, args.checkpoints, args.data
+        )
         df = pd.DataFrame(data_dict)
-        df.to_csv(Path(args.sink) / f'vision-{args.nets}-{dataset.replace("/", "--")}{"-grayscale" if grayscale else ""}.csv', index=False)
+
+        dataset_file_str = dataset.replace("/", "--")
+        df.to_csv(
+            Path(args.sink) / f"vision-{args.nets}-{dataset_file_str}.csv", index=False
+        )

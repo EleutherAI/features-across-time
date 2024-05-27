@@ -42,14 +42,17 @@ def hex_to_rgba(hex_color, opacity=0.5):
 
 
 def plot_bpb_and_divergences(
-    df: pd.DataFrame, image_name: str, debug: bool, model_series: str, qualitative=False
+    df: pd.DataFrame,
+    image_name: str,
+    bpb_coefficient: int,
+    model_series: str,
+    qualitative=False,
 ):
-    df = df[df['step'] != 0] # Step = 0 gives final step, which we collect elsewhere
-    if not debug:
-        kaleido_workaround()
+    df = df[df["step"] != 0]  # Step = 0 gives final step, which we collect elsewhere
+
+    kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
-    bpb_coefficient = 0.3650388
 
     div_metadata = [
         (
@@ -85,9 +88,6 @@ def plot_bpb_and_divergences(
     ]
     entropies = [2.89, 2.04, 2]
 
-    # log_spaced_indices = np.unique(np.logspace(0, np.log2(df['index'].max()), base=2, num=20).astype(int))
-    # df = df[df['index'].isin(log_spaced_indices)]
-
     fig = make_subplots(
         rows=2,
         cols=3,
@@ -104,7 +104,7 @@ def plot_bpb_and_divergences(
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["1_gram", "2_gram"]): # "3_gram"
+    for idx, ngram in enumerate(["1_gram", "2_gram"]):  # "3_gram"
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -278,8 +278,13 @@ def plot_bpb_and_divergences(
 
 def plot_model_sizes(debug: bool):
     num_samples = 1024
-    model_series="Pythia" # "Mamba" 
+    model_series = "Pythia"  # "Mamba"
     os.makedirs(Path.cwd() / "images", exist_ok=True)
+
+    # pile
+    # bpb_coefficient = 0.3650388
+    # es 1 billion
+    bpb_coefficient = 0.4157027
 
     model_metadata = [
         # ("pythia-14m", "14M", 8),
@@ -312,7 +317,9 @@ def plot_model_sizes(debug: bool):
         dfs.append(model_df)
 
         # trigram_df = pd.read_csv(
-        #     Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
+        #     Path.cwd() / 
+        #     "output" / 
+        #     f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
         # )
         # dfs.append(trigram_df)
         # model_df = pd.concat(dfs)
@@ -331,8 +338,8 @@ def plot_model_sizes(debug: bool):
     df = pd.concat(model_dfs)
 
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
-    
-    plot_bpb_and_divergences(df, image_name, debug, model_series)
+
+    plot_bpb_and_divergences(df, image_name, bpb_coefficient, model_series)
 
 
 def main():

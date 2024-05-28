@@ -89,20 +89,18 @@ def finetuned_stats_worker(
     data_loader = DataLoader(
         load_from_disk(data_path), batch_size=experiment.batch_size
     )
-    train_kl_div_means = []
-    train_kl_div_stds = []
-    train_filtered_kl_div_means = []
-    train_filtered_kl_div_stds = []
+    kl_div_means = []
+    kl_div_stds = []
 
     for step in steps:
-        data = iter(data_loader)
         model = experiment.get_model(
             experiment.team, experiment.model_name, step, tmp_cache_dir, device=device
         )
         running_bigram_stats = torch.zeros(
             experiment.d_vocab, experiment.d_vocab, device=device, dtype=torch.float32
         )
-        for i in range(num_iters):
+        data = iter(data_loader)
+        for _ in range(num_iters):
             sample = next(data)["input_ids"].to(device)
             logits = model(sample).logits[:, :, : experiment.d_vocab]
             # Upcasting the probs to avoid numerical instability
@@ -121,31 +119,22 @@ def finetuned_stats_worker(
             running_bigram_stats.cpu() + torch.finfo(torch.float32).eps
         )
 
-        sums = running_bigram_stats.sum(dim=1)
-        if gpu_id == 0:
-            print(
-                "assert",
-                torch.all(
-                    torch.isclose(sums, torch.ones_like(sums))
-                    | torch.isclose(sums, torch.zeros_like(sums))
-                ),
-            )
+        # sums = running_bigram_stats.sum(dim=1)
+        # if gpu_id == 0:
+        #     print(
+        #         "assert",
+        #         torch.all(
+        #             torch.isclose(sums, torch.ones_like(sums))
+        #             | torch.isclose(sums, torch.zeros_like(sums))
+        #         ),
+        #     )
 
-        train_kl_divs = kl_divergence_log_space(
+        kl_divs = kl_divergence_log_space(
             dense_bigram_probs.log(), running_bigram_stats.log()
         )
-        train_kl_div_means.append(train_kl_divs.mean())
-        train_kl_div_stds.append(train_kl_divs.std())
-        print("train mean", train_kl_div_means[-1])
-
-        non_zero = (sums > 0).unsqueeze(1).repeat(1, running_bigram_stats.shape[1])
-        train_filtered_kl_divs = kl_divergence_log_space(
-            dense_bigram_probs[non_zero].log(), running_bigram_stats[non_zero].log()
-        )
-        print("non zero", non_zero.sum())
-        train_filtered_kl_div_means.append(train_filtered_kl_divs.mean())
-        train_filtered_kl_div_stds.append(train_filtered_kl_divs.std())
-        print(train_filtered_kl_div_means[-1])
+        kl_div_means.append(kl_divs.mean().item())
+        kl_div_stds.append(kl_divs.std().item())
+        print("train mean", kl_div_means[-1])
 
         shutil.rmtree(
             tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}",
@@ -155,10 +144,8 @@ def finetuned_stats_worker(
     df = pd.DataFrame(
         {
             "step": steps,
-            "kl_mean": train_kl_div_means,
-            "kl_std": train_kl_div_stds,
-            "filtered_kl_mean": train_filtered_kl_div_means,
-            "filtered_kl_std": train_filtered_kl_div_stds,
+            "kl_mean": kl_div_means,
+            "kl_std": kl_div_stds,
         }
     )
     df.to_csv(

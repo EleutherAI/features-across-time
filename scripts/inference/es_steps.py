@@ -66,7 +66,7 @@ def get_confidence_intervals(
 def finetuned_stats_worker(
     gpu_id: int,
     experiment: Experiment,
-    bigrams_path: str,
+    ngrams_path: str,
     dataset_path: str,
     tmp_cache_path: str,
     steps: list[int],
@@ -78,8 +78,9 @@ def finetuned_stats_worker(
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
-    ngram_model = NgramModel(bigrams_path, experiment.batch_size, device=device)
-    # print("Loaded n-gram model...")
+    bigrams_path = Path(ngrams_path) / "bigrams.pkl"
+    ngram_model = NgramModel(str(bigrams_path), experiment.batch_size, device=device)
+    print("Loaded n-gram model...")
 
     ngram_means = defaultdict(list)
     ngram_conf_intervals = defaultdict(list)
@@ -93,17 +94,29 @@ def finetuned_stats_worker(
     data_loader = DataLoader(
         load_from_disk(dataset_path), batch_size=experiment.batch_size
     )
+
+    ngram_data_loaders = []
+    for n in experiment.ngram_orders:
+        sequences = load_from_disk(str(Path(ngrams_path) / f"{n}-gram-sequences.hf"))
+        sequences.set_format(type="torch", columns=["input_ids"])
+        ngram_data_loaders.append(
+            DataLoader(sequences, batch_size=experiment.batch_size)
+        )
+
     for step in steps:
-        data = iter(data_loader)
         model = experiment.get_model(
             experiment.team, experiment.model_name, step, tmp_cache_dir, device=device
         )
+        data = iter(data_loader)
+        ngram_data = [
+            iter(ngram_data_loaders[i]) for i in range(len(experiment.ngram_orders))
+        ]
 
         running_step_ngram_loss_means = [0.0] * len(experiment.ngram_orders)
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
             for n_index, n in enumerate(experiment.ngram_orders):
-                ngram_sample = ngram_model.get_ngram_seq(n, i, Path("data/es")).long()
+                ngram_sample = next(ngram_data[n_index])["input_ids"].to(device)
                 ngram_logits = model(ngram_sample).logits[:, :, : experiment.d_vocab]
 
                 ngram_loss_mean = F.cross_entropy(
@@ -119,7 +132,8 @@ def finetuned_stats_worker(
 
             sample = next(data)["input_ids"].to(device).to(torch.int32)
             logits = model(sample).logits[:, :, : experiment.d_vocab]
-            # Should be converted to a single n calculation then moved into the n_index loop above
+            # Should be converted to a single n calculation and
+            # moved into the n_index loop above
             divergences, _ = get_mean_divergences(
                 sample,
                 logits,
@@ -187,7 +201,8 @@ def finetuned_stats_worker(
     df.to_csv(
         Path.cwd()
         / "output"
-        / f"finetune_bigram_{experiment.model_name}_{experiment.num_samples}_{gpu_id}.csv",
+        / f"finetune_bigram_{experiment.model_name}_\
+            {experiment.num_samples}_{gpu_id}.csv",
         index=False,
     )
     return df
@@ -257,7 +272,8 @@ def main(ngram_path: str, dataset_path: str, tmp_cache_path: str, seed: int = 1)
         df.to_csv(
             Path.cwd()
             / "output"
-            / f"finetune_bigram_{experiment.model_name}_{experiment.num_samples}_{experiment.ngram_orders}.csv",
+            / f"es_{experiment.model_name}_{experiment.num_samples}_\
+                {experiment.ngram_orders}.csv",
             index=False,
         )
 
@@ -270,9 +286,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="data/es/bigrams.pkl",
-        help="Path to pickled sparse scipy array \
-            of bigram counts for a data distribution",
+        default="data/es",
+        help="Path to directory containing pickled \
+            sparse scipy array of bigram counts for \
+            a data distribution and n-gram sequences",
     )
     parser.add_argument(
         "--data_path",

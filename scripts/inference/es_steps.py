@@ -103,7 +103,7 @@ def finetuned_stats_worker(
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
             for n_index, n in enumerate(experiment.ngram_orders):
-                ngram_sample = ngram_model.get_ngram_seq(n, i).long()
+                ngram_sample = ngram_model.get_ngram_seq(n, i, Path("data/es")).long()
                 ngram_logits = model(ngram_sample).logits[:, :, : experiment.d_vocab]
 
                 ngram_loss_mean = F.cross_entropy(
@@ -232,15 +232,15 @@ def main(ngram_path: str, dataset_path: str, tmp_cache_path: str, seed: int = 1)
             eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id,
         )
         for model_name, batch_size in [
-            ("pythia-14m", 2),
-            ("pythia-70m", 4),
+            # ("pythia-14m", 2),
+            # ("pythia-70m", 4),
             ("pythia-160m", 4),
-            ("pythia-410m", 4),
-            ("pythia-1b", 4),
-            ("pythia-1.4b", 4),
-            ("pythia-2.8b", 4),
-            ("pythia-6.9b", 1),
-            ("pythia-12b", 1),
+            # ("pythia-410m", 4),
+            # ("pythia-1b", 4),
+            # ("pythia-1.4b", 4),
+            # ("pythia-2.8b", 4),
+            # ("pythia-6.9b", 1),
+            # ("pythia-12b", 1),
         ]
     ]
 
@@ -271,7 +271,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ngram_path",
         default="data/es/bigrams.pkl",
-        help="Path to pickled sparse scipy array of bigram counts for a data distribution",
+        help="Path to pickled sparse scipy array \
+            of bigram counts for a data distribution",
     )
     parser.add_argument(
         "--data_path",

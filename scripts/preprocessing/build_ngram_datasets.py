@@ -2,7 +2,6 @@ import argparse
 import math
 import os
 import pickle
-import time
 from pathlib import Path
 
 import numpy as np
@@ -224,22 +223,15 @@ def main(
         k,
     )
 
-    # Check sampled 1- and 2-gram sequences look right
-    for sample_n in [1, 2]:
-        print(
-            f"3 {sample_n}-gram sequence samples:\n"
-            + "\n".join(ngram_model.get_sample_strs(sample_n, 3))
-        )
+    # Check sampled sequences look correct
+    print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
     print(
         f"Loaded ngram model, generating {num_samples} \
             {n}-gram sequences of {k} tokens..."
     )
 
-    start = time.time()
     data = ngram_model.generate_ngrams(n, num_samples)
-    print(time.time() - start)
-
     data_dict = {"input_ids": torch.tensor(data)}
     Dataset.from_dict(data_dict).save_to_disk(data_path / f"{n}-gram-sequences.hf")
 

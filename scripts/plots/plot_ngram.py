@@ -46,6 +46,7 @@ def plot_bpb_and_divergences(
     image_name: str,
     bpb_coefficient: int,
     model_series: str,
+    ngram_entropies_bpb: list[int],
     qualitative=False,
 ):
     df = df[df["step"] != 0]  # Step = 0 gives final step, which we collect elsewhere
@@ -86,7 +87,6 @@ def plot_bpb_and_divergences(
         "star",
         "hexagram",
     ]
-    entropies = [2.89, 2.04, 2]
 
     fig = make_subplots(
         rows=2,
@@ -167,9 +167,9 @@ def plot_bpb_and_divergences(
             fig.add_shape(
                 type="line",
                 x0=1,
-                y0=entropies[idx],
+                y0=ngram_entropies_bpb[idx],
                 x1=143000,
-                y1=entropies[idx],
+                y1=ngram_entropies_bpb[idx],
                 line=dict(color="black", width=2, dash="dot"),
                 row=1,
                 col=idx + 1,
@@ -296,12 +296,12 @@ def plot_model_sizes(debug: bool):
         # ("pythia-2.8b", "2.8B", 8),
         # ("pythia-6.9b", "6.9B", 8),
         # ("pythia-12b", "12B", 8),
-        ("finetune_pythia-14m", "14M", 8),
-        ("finetune_pythia-70m", "70M", 8),
+        # ("finetune_pythia-14m", "14M", 8),
+        # ("finetune_pythia-70m", "70M", 8),
         ("finetune_pythia-160m", "160M", 8),
-        ("finetune_pythia-410m", "410M", 8),
-        ("finetune_pythia-1b", "1B", 8),
-        ("finetune_pythia-1.4b", "1.4B", 8),
+        # ("finetune_pythia-410m", "410M", 8),
+        # ("finetune_pythia-1b", "1B", 8),
+        # ("finetune_pythia-1.4b", "1.4B", 8),
     ]
     # model_metadata = [
     #     ("mamba-160m-hf", "160m", 6),
@@ -339,7 +339,11 @@ def plot_model_sizes(debug: bool):
 
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
 
-    plot_bpb_and_divergences(df, image_name, bpb_coefficient, model_series)
+    es_entropies_bpb = [2.72, 1.50]
+
+    plot_bpb_and_divergences(
+        df, image_name, bpb_coefficient, model_series, es_entropies_bpb
+    )
 
 
 def main():

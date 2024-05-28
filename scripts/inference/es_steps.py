@@ -217,7 +217,7 @@ def main(ngram_path: str, dataset_path: str, tmp_cache_path: str, seed: int = 1)
 
     experiments = [
         Experiment(
-            num_samples=8192,
+            num_samples=1024,
             batch_size=batch_size,
             seq_len=2048,
             team="EleutherAI",

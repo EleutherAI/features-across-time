@@ -40,7 +40,7 @@ def conditional_entropy(arr: NDArray, bpb_ratio: float):
     """Bigram model entropy"""
     """H(Y|X) = H(X, Y) - H(X)"""
     H = entropy(arr.data) - entropy(arr.sum(1))
-    print("Entropy: ", H)  # 5.59
+    print("Entropy: ", H)
     print("Entropy (bpb):", H * bpb_ratio)
 
 
@@ -177,32 +177,6 @@ class NgramSeqModel:
         ).item()
 
 
-def bigram_properties(
-    bigrams_path,
-    data_path,
-    ngram_model,
-    batch,
-    bpb_ratio: float,
-    num_samples: int,
-    seq_len: int,
-):
-    np.memmap(
-        data_path / "2-gram-sequences.npy",
-        mode="r",
-        dtype=np.uint16,
-        shape=(num_samples, seq_len),
-    )
-    # entropies = []
-    # for row in data:
-    #     entropy = ngram_model.cross_entropy(row)
-    #     entropies.append(entropy)
-    # print(entropies[:5], sum(entropies) / len(entropies))
-
-    with open(bigrams_path, "rb") as f:
-        arr = pickle.load(f)
-    conditional_entropy(arr, bpb_ratio)
-
-
 def main(
     n: int,
     k: int,
@@ -214,6 +188,13 @@ def main(
 ):
     if not os.path.exists(bigrams_path):
         build_bigrams(tokens_path, bigrams_path)
+
+    with open(bigrams_path, "rb") as f:
+        arr = pickle.load(f)
+        unigram_H = entropy(arr.sum(1))
+        print("Unigram entropy: ", unigram_H)
+        print("Unigram entropy (bpb):", unigram_H * bpb_ratio)
+        conditional_entropy(arr, bpb_ratio)
 
     ngram_model = NgramSeqModel(
         bigrams_path,
@@ -234,12 +215,6 @@ def main(
     data = ngram_model.generate_ngrams(n, num_samples)
     data_dict = {"input_ids": torch.tensor(data)}
     Dataset.from_dict(data_dict).save_to_disk(data_path / f"{n}-gram-sequences.hf")
-
-    print(
-        bigram_properties(
-            bigrams_path, data_path, ngram_model, 4, bpb_ratio, num_samples, k
-        )
-    )
 
     # ngram_model.generate_ngram_dists(n, num_samples=1024)
 

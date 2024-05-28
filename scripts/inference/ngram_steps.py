@@ -2,31 +2,32 @@ import argparse
 import math
 import os
 import shutil
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import tqdm.auto as tqdm
-from scipy import stats
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from datasets import load_from_disk
-from script_utils.ngram_model import NgramModel
-from script_utils.divergences import kl_divergence, js_divergence, one_hot_js_divergence
-from script_utils.load_model import get_auto_tokenizer, get_auto_model
+import tqdm.auto as tqdm
+from scipy import stats
+from script_utils.divergences import (
+    js_divergence,
+    kl_divergence_log_space,
+)
 from script_utils.experiment import Experiment, run_checkpoint_experiment_workers
+from script_utils.load_model import get_auto_model, get_auto_tokenizer
+from script_utils.ngram_model import NgramModel
 
 
 def get_mean_divergences(
     tokens: torch.Tensor,
-    logits: torch.Tensor, # ngram_dists: dict[int, torch.Tensor],
+    logits: torch.Tensor,  # ngram_dists: dict[int, torch.Tensor],
     ngram_model: NgramModel,
     batch: int,
     d_vocab: int,
-    ngram_orders: list[int]
+    ngram_orders: list[int],
 ) -> np.ndarray:
     divergences = []
     labels = [
@@ -44,21 +45,19 @@ def get_mean_divergences(
     #     ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
     #     + torch.finfo(torch.float32).eps
     # )
-    ngram_dists = {
-        3: ngram_model.get_ngram_prob(tokens, 3).log().cuda()
-    }
+    ngram_dists = {3: ngram_model.get_ngram_prob(tokens, 3).log().cuda()}
     print(ngram_dists[3].shape)
     # print("sampling dists: new")
     # new_bigram_dists = ngram_dists[2]
     # print(bigram_dists[:5, :20], new_bigram_dists[:5, :20])
-    
+
     # sample = tokens[:, 1:].flatten()
     # divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
     # divergences.append(one_hot_js_divergence(bigram_dists, sample, batch).mean())
     # del sample
 
-    for n in ngram_orders:    
-        divergences.append(kl_divergence(ngram_dists[n], logits).mean())
+    for n in ngram_orders:
+        divergences.append(kl_divergence_log_space(ngram_dists[n], logits).mean())
         divergences.append(js_divergence(ngram_dists[n], logits).mean())
 
         labels.append(f"{n}-gram_logit_kl_div")
@@ -69,7 +68,7 @@ def get_mean_divergences(
     # divergences.append(
     #     js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean()
     # )
-    
+
     return torch.stack(divergences), labels
 
 
@@ -106,7 +105,7 @@ def ngram_model_worker(
     # ] + [
     #     f"{n}-gram_logit_js_div" for n in experiment.ngram_orders
     # ]
-    
+
     # div_means = {label: [] for label in div_labels}
     # div_conf_intervals = {label: [] for label in div_labels}
 
@@ -119,18 +118,24 @@ def ngram_model_worker(
     # }
     for step in steps:
         # pile = iter(pile_data_loader)
-        model = experiment.get_model(experiment.team, experiment.model_name, step, tmp_cache_dir)
+        model = experiment.get_model(
+            experiment.team, experiment.model_name, step, tmp_cache_dir
+        )
 
         running_step_ngram_loss_means = [0.0] * len(experiment.ngram_orders)
         # running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
             for n_index, n in enumerate(experiment.ngram_orders):
                 ngram_sample = ngram_model.get_ngram_seq(n, i).long()
-                ngram_logits = model(ngram_sample).logits[:, :, :experiment.d_vocab]
+                ngram_logits = model(ngram_sample).logits[:, :, : experiment.d_vocab]
 
                 ngram_loss_mean = F.cross_entropy(
-                    ngram_logits[:, :-1].reshape(experiment.batch_size * experiment.seq_len, -1),
-                    ngram_sample[:, 1:].reshape(experiment.batch_size * experiment.seq_len),
+                    ngram_logits[:, :-1].reshape(
+                        experiment.batch_size * experiment.seq_len, -1
+                    ),
+                    ngram_sample[:, 1:].reshape(
+                        experiment.batch_size * experiment.seq_len
+                    ),
                     reduction="mean",
                 ).item()
                 running_step_ngram_loss_means[n_index] += ngram_loss_mean / num_iters
@@ -143,16 +148,20 @@ def ngram_model_worker(
             # }
 
             # logits = model(sample).logits[:, :, :experiment.d_vocab]
-            # divergences, _ = get_mean_divergences( # ngram_dists, 
+            # divergences, _ = get_mean_divergences( # ngram_dists,
             #     sample, logits, ngram_model, experiment.batch_size, experiment.d_vocab, experiment.ngram_orders
             # )
             # running_step_div_means += (divergences / num_iters).cpu()
             pbar.update(1)
 
-
         for n_index, n in enumerate(experiment.ngram_orders):
             ngram_means[n].append(running_step_ngram_loss_means[n_index])
-            ngram_conf_intervals[n].append(get_confidence_intervals(running_step_ngram_loss_means[n_index], num_iters * experiment.batch_size))
+            ngram_conf_intervals[n].append(
+                get_confidence_intervals(
+                    running_step_ngram_loss_means[n_index],
+                    num_iters * experiment.batch_size,
+                )
+            )
 
         # for i, label in enumerate(div_labels):
         #     div_means[label].append(running_step_div_means[i].item())
@@ -161,7 +170,8 @@ def ngram_model_worker(
         #     )
 
         shutil.rmtree(
-            tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}", ignore_errors=True
+            tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}",
+            ignore_errors=True,
         )
 
     # div_mean_data = {f"mean_{label}": div_means[label] for label in div_labels}
@@ -204,42 +214,56 @@ def ngram_model_worker(
 
 # zyphra_experiment = Experiment(
 #     num_samples=1024,
-#     batch_size=4, 
-#     seq_len=2048, 
-#     team="Zyphra", 
-#     model_name="Mamba-370M", 
-#     get_model=get_zyphra_mamba, 
+#     batch_size=4,
+#     seq_len=2048,
+#     team="Zyphra",
+#     model_name="Mamba-370M",
+#     get_model=get_zyphra_mamba,
 #     get_tokenizer=get_neo_tokenizer,
-#     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+#     d_vocab=50_277, # len(get_neo_tokenizer().vocab)
 #     # roughly log spaced steps + final step
 #     steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000]
 # )
 # experiments = [Experiment(
 #     num_samples=1024,
-#     batch_size=4, 
-#     seq_len=2048, 
-#     team="hails", 
-#     model_name="mamba-160m-hf", 
-#     get_model=get_hails_mamba, 
+#     batch_size=4,
+#     seq_len=2048,
+#     team="hails",
+#     model_name="mamba-160m-hf",
+#     get_model=get_hails_mamba,
 #     get_tokenizer=get_neo_tokenizer,
-#     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
+#     d_vocab=50_277, # len(get_neo_tokenizer().vocab)
 #     steps=[0] + [2**i for i in range(int(math.log2(256)) + 1)] + [1000, 2000, 4000, 8000, 16_000, 32_000, 61_000, 143_000]
 # )]
 def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
     experiments = [
         Experiment(
             num_samples=1024,
-            batch_size=batch_size, 
-            seq_len=2048, 
-            team="EleutherAI", 
-            model_name=model_name, 
-            get_model=get_auto_model, 
+            batch_size=batch_size,
+            seq_len=2048,
+            team="EleutherAI",
+            model_name=model_name,
+            get_model=get_auto_model,
             get_tokenizer=get_auto_tokenizer,
             d_vocab=50_277,
             # roughly log spaced steps + final step
-            steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
+            steps=[
+                0,
+                1,
+                2,
+                4,
+                8,
+                16,
+                256,
+                1000,
+                8000,
+                33_000,
+                66_000,
+                131_000,
+                143_000,
+            ],
             ngram_orders=[3],
-            eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id
+            eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id,
         )
         for model_name, batch_size in [
             # ("pythia-14m", 4),
@@ -256,13 +280,9 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
 
     for experiment in experiments:
         df = run_checkpoint_experiment_workers(
-            experiment, 
-            ngram_model_worker, 
-            ngram_path, 
-            pile_path, 
-            tmp_cache_path
+            experiment, ngram_model_worker, ngram_path, pile_path, tmp_cache_path
         )
-        
+
         df.to_csv(
             Path.cwd()
             / "output"

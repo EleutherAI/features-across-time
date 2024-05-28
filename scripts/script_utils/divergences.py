@@ -3,7 +3,7 @@ import math
 import torch
 
 
-def kl_divergence(
+def kl_divergence_log_space(
     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
     """Compute the KL divergence between two sets of logits."""
@@ -13,6 +13,17 @@ def kl_divergence(
     return torch.nansum(
         logit_p.sub(logsumexp_p).exp()
         * (logit_p.sub(logsumexp_p) - logit_q.sub(logsumexp_q)),
+        dim,
+    )
+
+
+def kl_divergence_linear_space(
+    probs_p: torch.Tensor, probs_q: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
+    """Compute the KL divergence between two sets of logits."""
+
+    return torch.nansum(
+        (probs_p / probs_q).log() * probs_p,
         dim,
     )
 

@@ -1,7 +1,7 @@
 import os
+from pathlib import Path
 
 import torch
-from safetensors import safe_open
 
 # from mamba_model import MambaModel
 # from mamba_ssm import MambaLMHeadModel
@@ -78,32 +78,15 @@ def load_and_combine_shards(model_dir, step, device):
 def get_es_finetune(
     team: str, model_name: str, step: int | None, cache_dir: str, device: str = "cuda"
 ):
-    model_dir = f"/mnt/ssd-1/lucia/{model_name}-es"
-    assert os.path.isdir(model_dir), f"Local directory {model_dir} does not exist"
-
-    try:
-        model_path = f"{model_dir}/checkpoint-{step}/model.safetensors"
-        new_state_dict = {}
-        with safe_open(model_path, framework="pt", device="cpu") as f:
-            for key in f.keys():
-                new_state_dict[key.replace("_orig_mod.", "")] = f.get_tensor(key)
-    except:
-        try:
-            model_path = f"{model_dir}/checkpoint-{step}/pytorch_model.bin"
-            state_dict = torch.load(model_path)
-            new_state_dict = {}
-            for key in state_dict.keys():
-                new_state_dict[key.replace("_orig_mod.", "")] = state_dict[key]
-        except:
-            model_path = f"{model_dir}/checkpoint-{step}"
-            state_dict = load_and_combine_shards(
-                model_dir=model_dir, step=step, device=device
-            )
-            for key in state_dict.keys():
-                new_state_dict[key.replace("_orig_mod.", "")] = state_dict[key]
+    state_dict_path = (
+        Path("ckpts") / f"{model_name}-es" / f"checkpoint-{step}" / "state_dict.pt"
+    )
+    assert os.path.isfile(
+        state_dict_path
+    ), f"Local state dict {state_dict_path} does not exist"
 
     model = GPTNeoXForCausalLM.from_pretrained(
-        f"{model_dir}/checkpoint-{step}", torch_dtype="auto", cache_dir=cache_dir
+        f"{team}/{model_name}", torch_dtype="auto", cache_dir=cache_dir
     ).to(device)
-    model.load_state_dict(new_state_dict)
+    model.load_state_dict(torch.load(state_dict_path))
     return model

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from datasets import load_from_disk
+from datasets import Dataset, load_from_disk
 from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.stats import entropy
@@ -225,10 +225,10 @@ def main(
     )
 
     # Check sampled 1- and 2-gram sequences look right
-    for n in [1, 2]:
+    for sample_n in [1, 2]:
         print(
-            f"3 {n}-gram sequence samples:\n"
-            + "\n".join(ngram_model.get_sample_strs(n, 3))
+            f"3 {sample_n}-gram sequence samples:\n"
+            + "\n".join(ngram_model.get_sample_strs(sample_n, 3))
         )
 
     print(
@@ -239,13 +239,9 @@ def main(
     start = time.time()
     data = ngram_model.generate_ngrams(n, num_samples)
     print(time.time() - start)
-    mmap = np.memmap(
-        data_path / f"{n}-gram-sequences.npy",
-        mode="w+",
-        dtype=data.dtype,
-        shape=data.shape,
-    )
-    mmap[:] = data
+
+    data_dict = {"input_ids": torch.tensor(data)}
+    Dataset.from_dict(data_dict).save_to_disk(data_path / f"{n}-gram-sequences.hf")
 
     print(
         bigram_properties(

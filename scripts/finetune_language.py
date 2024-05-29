@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from datasets import load_from_disk
 from script_utils.load_model import get_auto_model
+from torch.optim import AdamW
 from transformers import (
     Trainer,
     TrainerCallback,
@@ -15,6 +16,7 @@ from transformers import (
     TrainerState,
     TrainingArguments,
 )
+from transformers.optimization import get_cosine_with_min_lr_schedule_with_warmup
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 
 import wandb
@@ -102,13 +104,13 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
     val_ds = nontrain["train"].with_transform(encode)
     test = nontrain["test"].with_transform(encode)
 
+    unigram = load_from_disk(str(data_path / "1-gram-sequences.hf"))
+    unigram.set_format(type="torch", columns=["input_ids"])
+    bigram = load_from_disk(str(data_path / "2-gram-sequences.hf"))
+    bigram.set_format(type="torch", columns=["input_ids"])
     val = {
-        "1-gram": load_from_disk(str(data_path / "1-gram-sequences.hf")).with_transform(
-            encode
-        ),
-        "2-gram": load_from_disk(str(data_path / "2-gram-sequences.hf")).with_transform(
-            encode
-        ),
+        "1-gram": unigram.with_transform(encode),
+        "2-gram": bigram.with_transform(encode),
         "real": val_ds,
     }
 
@@ -124,8 +126,23 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
         # ("pythia-12b", 1),
     ]:
         model = get_auto_model("EleutherAI", model_name, None, tmp_cache_path).float()
+
+        learning_rate = 1e-4
+        optimizer = AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            betas=(0.9, 0.95),
+            eps=1e-8,
+            weight_decay=0.01,
+        )
+        lr_scheduler = get_cosine_with_min_lr_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=int(143_000 * 0.01),
+            num_training_steps=143_000,
+            min_lr=0.1 * learning_rate,
+        )
         training_arguments = TrainingArguments(
-            output_dir=f"ckpts/{model_name}-es",
+            output_dir=f"ckpts/{model_name}-es-lr={learning_rate}",
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
             num_train_epochs=1,
@@ -136,6 +153,7 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             logging_steps=500,
             report_to="wandb",
             log_on_each_node=False,
+            fp16=True,
         )
 
         if training_arguments.local_rank == 0 or training_arguments.local_rank == -1:
@@ -144,6 +162,7 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
         trainer = Trainer(
             model,
             training_arguments,
+            optimizers=(optimizer, lr_scheduler),
             train_dataset=train_ds,
             callbacks=[
                 LogSpacedCheckpoint(),

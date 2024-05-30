@@ -99,34 +99,37 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
     ds = load_from_disk(str(data_path / "es_tokenized.hf")).train_test_split(
         test_size=0.05
     )
-    train_ds = ds["train"].with_transform(encode)
+    train = ds["train"].map(encode)
     nontrain = ds["test"].train_test_split(train_size=1024, seed=seed)
-    val_ds = nontrain["train"].with_transform(encode)
-    test = nontrain["test"].with_transform(encode)
+    val = nontrain["train"].map(encode)
+    test = nontrain["test"].map(encode)
 
-    unigram = load_from_disk(str(data_path / "1-gram-sequences.hf"))
-    unigram.set_format(type="torch", columns=["input_ids"])
-    bigram = load_from_disk(str(data_path / "2-gram-sequences.hf"))
-    bigram.set_format(type="torch", columns=["input_ids"])
-    val = {
-        "1-gram": unigram.with_transform(encode),
-        "2-gram": bigram.with_transform(encode),
-        "real": val_ds,
+    unigram = load_from_disk(str(data_path / "1-gram-sequences.hf")).map(encode)
+    bigram = load_from_disk(str(data_path / "2-gram-sequences.hf")).map(encode)
+
+    for ds in [train, val, test, unigram, bigram]:
+        ds.set_format(type="torch", columns=["input_ids", "labels"])
+
+    vals = {
+        "1-gram": unigram,
+        "2-gram": bigram,
+        "real": val,
     }
 
     for model_name, batch_size in [
         # ("pythia-14m", 16),
-        # ("pythia-70m", 4),
+        ("pythia-70m", 4),
         ("pythia-160m", 4),
-        # ("pythia-410m", 2),
-        # ("pythia-1b", 2),
-        # ("pythia-1.4b", 2),
-        # ("pythia-2.8b", 2),
-        # ("pythia-6.9b", 1),
-        # ("pythia-12b", 1),
+        ("pythia-410m", 2),
+        ("pythia-1b", 2),
+        ("pythia-1.4b", 1),
+        ("pythia-2.8b", 1),
+        ("pythia-6.9b", 1),
+        ("pythia-12b", 1),
     ]:
-        model = get_auto_model("EleutherAI", model_name, None, tmp_cache_path).float()
-
+        model = get_auto_model(
+            "EleutherAI", model_name, None, tmp_cache_path, torch_dtype=torch.float32
+        )
         learning_rate = 1e-4
         optimizer = AdamW(
             model.parameters(),
@@ -141,6 +144,7 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             num_training_steps=143_000,
             min_lr=0.1 * learning_rate,
         )
+        #
         training_arguments = TrainingArguments(
             output_dir=f"ckpts/{model_name}-es-lr={learning_rate}",
             per_device_train_batch_size=batch_size,
@@ -152,8 +156,11 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             seed=seed,
             logging_steps=500,
             report_to="wandb",
+            bf16=True,
+            tf32=True,
             log_on_each_node=False,
-            fp16=True,
+            torch_compile=True,
+            ddp_find_unused_parameters=False,
         )
 
         if training_arguments.local_rank == 0 or training_arguments.local_rank == -1:
@@ -163,19 +170,18 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             model,
             training_arguments,
             optimizers=(optimizer, lr_scheduler),
-            train_dataset=train_ds,
+            train_dataset=train,
             callbacks=[
                 LogSpacedCheckpoint(),
                 LossLoggingCallback(),
                 SaveCompiledModelCallback(),
             ],
-            eval_dataset=val,
+            eval_dataset=vals,
         )
         trainer.train()
         trainer.evaluate(test)
 
 
-# accelerate launch --config_file scripts/config/default-config.yaml scripts/finetune_language.py
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter

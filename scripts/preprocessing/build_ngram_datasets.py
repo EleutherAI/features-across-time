@@ -214,7 +214,7 @@ def main(
 
     data = ngram_model.generate_ngrams(n, num_samples)
     data_dict = {"input_ids": torch.tensor(data)}
-    Dataset.from_dict(data_dict).save_to_disk(data_path / f"{n}-gram-sequences.hf")
+    Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
     # ngram_model.generate_ngram_dists(n, num_samples=1024)
 
@@ -243,21 +243,22 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--data_path",
-        default="data/es",
+        default="data/pile",
         type=str,
         help="Path to write data",
     )
     # "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     parser.add_argument(
         "--tokens_path",
-        default="data/es/es_tokenized.bin",
+        # "data/es/es_tokenized.bin",
+        default="/mnt/ssd-1/pile_preshuffled/standard/document.bin",
         type=str,
         help="Path to u16 tokenized dataset",
     )
     # "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
     parser.add_argument(
         "--bigrams_path",
-        default="data/es/bigrams.pkl",
+        default="data/pile/pythia-deduped-bigrams.pkl",
         type=str,
         help="Path to dataset bigram table",
     )

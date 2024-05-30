@@ -29,7 +29,7 @@ from scripts.script_utils.ngram_model import NgramModel
 
 def get_mean_divergences(
     tokens: torch.Tensor,
-    logits: torch.Tensor,  # ngram_dists: dict[int, torch.Tensor],
+    logits: torch.Tensor,
     ngram_model: NgramModel,
     batch: int,
     d_vocab: int,
@@ -40,40 +40,19 @@ def get_mean_divergences(
         # "logit_token_js_div",
         # "bigram_token_js_div",
     ]
-    logits = logits[:, :-1, :d_vocab].flatten(0, 1)
-    # possible bug at word boundary?
-    # bigram_dists = (
-    #     ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
-    #     + torch.finfo(torch.float32).eps
-    # )
-
-    # bigram_dists = (
-    #     ngram_model.get_bigram_dists(tokens[:, :-1].flatten())
-    #     + torch.finfo(torch.float32).eps
-    # )
-    ngram_dists = {3: ngram_model.get_ngram_prob(tokens, 3).log().cuda()}
-    print(ngram_dists[3].shape)
-    # print("sampling dists: new")
-    # new_bigram_dists = ngram_dists[2]
-    # print(bigram_dists[:5, :20], new_bigram_dists[:5, :20])
-
+    logits = logits[:, :, :d_vocab].flatten(0, 1)
     # sample = tokens[:, 1:].flatten()
     # divergences.append(one_hot_js_divergence(logits, sample, batch).mean())
     # divergences.append(one_hot_js_divergence(bigram_dists, sample, batch).mean())
     # del sample
 
     for n in ngram_orders:
-        divergences.append(kl_divergence_log_space(ngram_dists[n], logits).mean())
-        divergences.append(js_divergence(ngram_dists[n], logits).mean())
+        ngram_dists = ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
+        divergences.append(kl_divergence_log_space(ngram_dists, logits).mean())
+        divergences.append(js_divergence(ngram_dists, logits).mean())
 
         labels.append(f"{n}-gram_logit_kl_div")
         labels.append(f"{n}-gram_logit_js_div")
-
-    # unigram_dist = ngram_model.unigrams.log() + torch.finfo(torch.float32).eps
-    # divergences.append(kl_divergence(unigram_dist, logits).mean())
-    # divergences.append(
-    #     js_divergence(unigram_dist.repeat(2048 * batch, 1), logits).mean()
-    # )
 
     return torch.stack(divergences), labels
 
@@ -89,7 +68,7 @@ def get_confidence_intervals(
 def ngram_model_worker(
     gpu_id: int,
     experiment: Experiment,
-    model_path: str,
+    model_path: Path,
     pile_path: str,
     tmp_cache_path: str,
     steps: list[int],
@@ -100,7 +79,7 @@ def ngram_model_worker(
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
     os.makedirs(tmp_cache_dir, exist_ok=True)
 
-    ngram_model = NgramModel(model_path, experiment.batch_size)
+    ngram_model = NgramModel(str(model_path / "bigrams.pkl"), experiment.batch_size)
     print("Loaded n-gram model...")
 
     ngram_means = defaultdict(list)
@@ -118,15 +97,7 @@ def ngram_model_worker(
     pile_data_loader = DataLoader(
         load_from_disk(pile_path), batch_size=experiment.batch_size
     )
-    # ngram_pile_dist_mmaps = {
-    #     n: np.memmap(
-    #         f'{n}-gram-pile-dists.npy',
-    #         mode='r',
-    #         dtype=np.int64,
-    #         shape=(experiment.num_samples, experiment.d_vocab)
-    #     )
-    #     for n in experiment.ngram_orders
-    # }
+
     for step in steps:
         pile = iter(pile_data_loader)
         model = experiment.get_model(
@@ -137,9 +108,12 @@ def ngram_model_worker(
         running_step_div_means = torch.zeros(len(div_labels))
         for i in range(num_iters):
             for n_index, n in enumerate(experiment.ngram_orders):
-                ngram_sample = ngram_model.get_ngram_seq(n, i).long()
+                ngram_sample = (
+                    ngram_model.get_ngram_seq(n, i, sequence_path=model_path)
+                    .cuda()
+                    .long()
+                )
                 ngram_logits = model(ngram_sample).logits[:, :, : experiment.d_vocab]
-
                 ngram_loss_mean = F.cross_entropy(
                     ngram_logits[:, :-1].reshape(
                         experiment.batch_size * experiment.seq_len, -1
@@ -152,17 +126,8 @@ def ngram_model_worker(
                 running_step_ngram_loss_means[n_index] += ngram_loss_mean / num_iters
 
             sample = next(pile)["input_ids"].cuda().to(torch.int32)
-            # Fetch ngram dists corresponding to this pile sample
-            # ngram_dists = {
-            #     n: ngram_pile_dist_mmaps[n][
-            #         (experiment.batch_size * i):
-            #         (experiment.batch_size * i) + experiment.batch_size
-            #         ]
-            #     for n in experiment.ngram_orders
-            # }
-
             logits = model(sample).logits[:, :, : experiment.d_vocab]
-            divergences, _ = get_mean_divergences(  # ngram_dists,
+            divergences, _ = get_mean_divergences(
                 sample,
                 logits,
                 ngram_model,
@@ -190,10 +155,10 @@ def ngram_model_worker(
                 )
             )
 
-        shutil.rmtree(
-            tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}",
-            ignore_errors=True,
-        )
+        # shutil.rmtree(
+        #     tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}",
+        #     ignore_errors=True,
+        # )
 
     div_mean_data = {f"mean_{label}": div_means[label] for label in div_labels}
     div_bottom_conf_data = {
@@ -274,7 +239,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
             # ("pythia-6.9b", 1),
             # ("pythia-12b", 1),
         ]
-        + [(f"pythia-14m-seed{i}", 8) for i in range(1, 8)]
+        + [(f"pythia-14m-seed{i}", 8) for i in range(2, 8)]
         + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
         + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
     ]
@@ -286,7 +251,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
             ngram_path,
             pile_path,
             tmp_cache_path,
-            gpu_ids=[2, 3, 4, 5, 6, 7],
+            gpu_ids=[0, 1, 2, 3, 4, 5, 6, 7],
         )
 
         df.to_csv(
@@ -306,8 +271,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ngram_path",
-        default="/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
-        help="Path to pickled sparse scipy array of bigram counts over the Pile",
+        default="data/pile-deduped",
+        help="Path to n-gram data: pickled sparse scipy array of \
+            bigram counts; hf datasets of n-gram sequences",
     )
     parser.add_argument(
         "--pile_path",
@@ -320,4 +286,4 @@ if __name__ == "__main__":
         help="Path to cache (repeatedly cleared to free disk space)",
     )
     args = parser.parse_args()
-    main(args.ngram_path, args.pile_path, args.tmp_cache_path)
+    main(Path(args.ngram_path), args.pile_path, args.tmp_cache_path)

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import scipy
 import torch
+from datasets import load_from_disk
 from transformers import AutoTokenizer
 
 
@@ -25,7 +26,7 @@ class NgramModel:
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
 
-        # Conver to sparse CSR tensor in a dumb way
+        # Convert to sparse CSR tensor in a dumb way
         sparse_bigram_probs = torch.tensor(
             bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)
         ).to_sparse()
@@ -62,17 +63,12 @@ class NgramModel:
 
     def get_ngram_seq(self, n: int, i: int, sequence_path=Path.cwd()) -> torch.Tensor:
         """Fetch a precomputed batch of n-gram sequences"""
-        ngram_samples = np.memmap(
-            sequence_path / f"{n}-gram-sequences.npy",
-            dtype=np.int64,
-            mode="r",
-            shape=(1024, self.seq_len),
-        )
-        batch = ngram_samples[
-            i * self.batch_size : (i * self.batch_size) + self.batch_size
-        ]
+        ngram_samples = load_from_disk(str(sequence_path / f"{n}-gram-sequences.hf"))
+        ngram_samples.set_format("torch", columns=["input_ids"])
 
-        return torch.tensor(batch, device=self.device).long()
+        return ngram_samples[
+            i * self.batch_size : (i * self.batch_size) + self.batch_size
+        ]["input_ids"]
 
     def get_ngram_str(self, n: int, i: int) -> list[str]:
         """Fetch a precomputed batch of n-gram sequences and convert to strs"""
@@ -81,8 +77,8 @@ class NgramModel:
         return [self.tokenizer.decode(row.tolist()) for row in tokens]
 
     def get_bigram_prob(self, prev: torch.Tensor) -> torch.Tensor:
-        """Non-ideal behaviour with flattened tensors where the end of once batch and 
-        the start of the next forms a bigram - should be extended to accept a batch 
+        """Non-ideal behaviour with flattened tensors where the end of once batch and
+        the start of the next forms a bigram - should be extended to accept a batch
         dimension
         """
         starts = self.bigram_probs.crow_indices()[prev]
@@ -99,6 +95,9 @@ class NgramModel:
         return bigram_dists
 
     def get_ngram_prob(self, tokens: torch.Tensor, n: int) -> torch.Tensor:
+        if n >= 3:
+            raise NotImplementedError
+
         if n == 1:
             return (
                 self.unigram_probs.expand((*tokens.shape, -1))
@@ -113,15 +112,15 @@ class NgramModel:
                     + torch.finfo(torch.float32).eps
                 )
 
-        ngram_prefixes = []
-        for row in tokens:
-            ngram_prefixes.extend(
-                [row[i : i + (n - 1)].tolist() for i in range(len(row) - (n - 2))]
-            )
+        # ngram_prefixes = []
+        # for row in tokens:
+        #     ngram_prefixes.extend(
+        #         [row[i : i + (n - 1)].tolist() for i in range(len(row) - (n - 2))]
+        #     )
 
-        counts = torch.tensor(
-            self.mmap_index.batch_next_token_counts(ngram_prefixes, self.d_vocab)
-        )[:, : self.d_vocab]
-        return counts / (
-            counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps
-        )
+        # counts = torch.tensor(
+        #     self.mmap_index.batch_next_token_counts(ngram_prefixes, self.d_vocab)
+        # )[:, : self.d_vocab]
+        # return counts / (
+        #     counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps
+        # )

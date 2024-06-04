@@ -22,11 +22,10 @@ def get_auto_model(
     team: str,
     model_name: str,
     step: int | None,
-    cache_dir: str,
     torch_dtype="auto",
     device: str = "cuda",
 ):
-    kwargs = {"torch_dtype": torch_dtype, "cache_dir": cache_dir}
+    kwargs = {"torch_dtype": torch_dtype}
     if step:
         kwargs["revision"] = f"step{step}"
 

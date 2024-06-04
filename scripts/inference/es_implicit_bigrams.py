@@ -66,15 +66,10 @@ def finetuned_stats_worker(
     experiment: Experiment,
     bigrams_path: str,
     data_path: str,
-    tmp_cache_path: str,
     steps: list[int],
 ) -> pd.DataFrame:
     device = f"cuda:{gpu_id}"
     torch.cuda.set_device(gpu_id)
-
-    tmp_cache_dir = Path(tmp_cache_path) / str(gpu_id)
-    shutil.rmtree(tmp_cache_dir, ignore_errors=True)
-    os.makedirs(tmp_cache_dir, exist_ok=True)
 
     with open(bigrams_path, "rb") as f:
         bigram_counts = pickle.load(f).toarray().astype(np.float32)
@@ -94,7 +89,7 @@ def finetuned_stats_worker(
 
     for step in steps:
         model = experiment.get_model(
-            experiment.team, experiment.model_name, step, tmp_cache_dir, device=device
+            experiment.team, experiment.model_name, step, device=device
         )
         running_bigram_stats = torch.zeros(
             experiment.d_vocab, experiment.d_vocab, device=device, dtype=torch.float32
@@ -136,11 +131,6 @@ def finetuned_stats_worker(
         kl_div_stds.append(kl_divs.std().item())
         print("train mean", kl_div_means[-1])
 
-        shutil.rmtree(
-            tmp_cache_dir / f"models--{experiment.team}--{experiment.model_name}",
-            ignore_errors=True,
-        )
-
     df = pd.DataFrame(
         {
             "step": steps,
@@ -158,7 +148,7 @@ def finetuned_stats_worker(
     return df
 
 
-def main(ngram_path: str, data_path: str, tmp_cache_path: str, seed: int = 1):
+def main(ngram_path: str, data_path: str, seed: int = 1):
     # Seed everything
     np.random.seed(seed)
     random.seed(seed)
@@ -214,9 +204,7 @@ def main(ngram_path: str, data_path: str, tmp_cache_path: str, seed: int = 1):
             experiment,
             finetuned_stats_worker,
             ngram_path,
-            data_path,
-            tmp_cache_path,
-            gpu_ids=[0, 1, 3, 4, 5, 6, 7],  # list(range(8))
+            data_path
         )
 
         df.to_csv(
@@ -245,10 +233,5 @@ if __name__ == "__main__":
         help="Path to data",
     )
     parser.add_argument("--seed", default=1)
-    parser.add_argument(
-        "--tmp_cache_path",
-        default=".cache",
-        help="Path to cache (repeatedly cleared to free disk space)",
-    )
     args = parser.parse_args()
-    main(args.ngram_path, args.data_path, args.tmp_cache_path, args.seed)
+    main(args.ngram_path, args.data_path, args.seed)

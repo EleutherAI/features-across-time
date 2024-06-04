@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from datasets import load_from_disk
-from script_utils.load_model import get_auto_model
+from transformers import AutoModelForCausalLM
 from torch.optim import AdamW
 from transformers import (
     Trainer,
@@ -89,7 +89,7 @@ class SaveCompiledModelCallback(TrainerCallback):
                 os.remove(pytorch_model_path)
 
 
-def main(tmp_cache_path: str, data_path: Path, seed: int):
+def main(data_path: Path, seed: int):
     print(f"Parallelising over {torch.cuda.device_count()} GPUs...")
     np.random.seed(seed)
     random.seed(seed)
@@ -118,7 +118,7 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
 
     for model_name, batch_size in [
         # ("pythia-14m", 16),
-        ("pythia-70m", 4),
+        # ("pythia-70m", 8),
         ("pythia-160m", 4),
         ("pythia-410m", 2),
         ("pythia-1b", 2),
@@ -126,10 +126,11 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
         ("pythia-2.8b", 1),
         ("pythia-6.9b", 1),
         ("pythia-12b", 1),
-    ]:
-        model = get_auto_model(
-            "EleutherAI", model_name, None, tmp_cache_path, torch_dtype=torch.float32
-        )
+    ]:  
+        model = AutoModelForCausalLM.from_pretrained(
+            f"EleutherAI/{model_name}", 
+            torch_dtype=torch.float32
+        ).to("cuda")
         learning_rate = 1e-4
         optimizer = AdamW(
             model.parameters(),
@@ -144,9 +145,8 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             num_training_steps=143_000,
             min_lr=0.1 * learning_rate,
         )
-        #
         training_arguments = TrainingArguments(
-            output_dir=f"ckpts/{model_name}-es-lr={learning_rate}",
+            output_dir=f"ckpts/{model_name}-es",
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
             num_train_epochs=1,
@@ -158,7 +158,7 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             report_to="wandb",
             bf16=True,
             tf32=True,
-            log_on_each_node=False,
+            log_on_each_node=False, 
             torch_compile=True,
             ddp_find_unused_parameters=False,
         )
@@ -178,6 +178,7 @@ def main(tmp_cache_path: str, data_path: Path, seed: int):
             ],
             eval_dataset=vals,
         )
+        print("Training...")
         trainer.train()
         trainer.evaluate(test)
 
@@ -187,11 +188,6 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "--tmp_cache_path",
-        default=".cache",
-        help="Path to cache (repeatedly cleared to free disk space)",
-    )
-    parser.add_argument(
         "--data_path",
         default="data/es",
         help="Path to datasets",
@@ -199,4 +195,4 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=0)
     args = parser.parse_args()
 
-    main(args.tmp_cache_path, Path(args.data_path), args.seed)
+    main(Path(args.data_path), args.seed)

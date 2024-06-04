@@ -28,7 +28,7 @@ def kl_divergence_linear_space(
     )
 
 
-def js_divergence(
+def js_divergence_log_space(
     logit_p: torch.Tensor, logit_q: torch.Tensor, dim: int = -1
 ) -> torch.Tensor:
     """Compute the Jensen-Shannon divergence between two sets of logits"""

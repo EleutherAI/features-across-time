@@ -1,0 +1,56 @@
+A100:
+  regnet-1.6gf: 512
+  regnet-3.2gf: 64
+  regnet-400mf: 512
+  convnext-pico: 512
+  convnext-femto: 512
+  convnext-atto: 512
+  convnext-nano: 512
+  convnext-tiny: 256  
+  swin-pico: 512
+  swin-femto: 512
+  swin-atto: 512
+  swin-nano: 512
+  swin-tiny: 512
+A40:
+  regnet-1.6gf: 512
+  regnet-3.2gf: 64
+  regnet-400mf: 512
+  convnext-pico: 512
+  convnext-femto: 512
+  convnext-atto: 512
+  convnext-nano: 512
+  convnext-tiny: 256  
+  swin-pico: 512
+  swin-femto: 512
+  swin-atto: 512
+  swin-nano: 512
+  swin-tiny: 512
+A40-fashion-mnist:
+  convnext-pico: 128
+  convnext-femto: 128
+  convnext-atto: 128
+  convnext-nano: 128
+  convnext-tiny: 128  
+  regnet-1.6gf: 128
+  regnet-3.2gf: 64
+  regnet-400mf: 128
+  swin-pico: 128
+  swin-femto: 128
+  swin-atto: 128
+  swin-nano: 128
+  swin-tiny: 128
+A40-EleutherAI--cifarnet:
+  convnext-tiny: 64  
+  convnext-pico: 64
+  convnext-femto: 64
+  convnext-atto: 64
+  convnext-nano: 64
+  regnet-400mf: 64
+  regnet-1.6gf: 64
+  regnet-3.2gf: 32
+  swin-pico: 64
+  swin-femto: 64
+  swin-atto: 64
+  swin-nano: 64
+  swin-tiny: 64

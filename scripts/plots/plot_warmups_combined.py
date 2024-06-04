@@ -5,13 +5,26 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
 from plotly.subplots import make_subplots
-import numpy as np
+
+marker_series = [
+    "circle",
+    "square",
+    "diamond",
+    "cross",
+    "x",
+    "triangle-up",
+    "triangle-down",
+    "triangle-left",
+    "triangle-right",
+    "pentagon",
+    "hexagon",
+    "octagon",
+    "star",
+    "hexagram",
+]
 
 def plot_loss_and_divergence(
-    df: pd.DataFrame, 
-    image_name: str,
-    bpb_coefficient = 0.3650388,
-    entropies = [2.89, 2.04]
+    df: pd.DataFrame, image_name: str, bpb_coefficient=0.3650388, entropies=[2.89, 2.04]
 ):
     kaleido_workaround()
 
@@ -32,28 +45,12 @@ def plot_loss_and_divergence(
             1,
         ),
     ]
-    marker_series = [
-        "circle",
-        "square",
-        "diamond",
-        "cross",
-        "x",
-        "triangle-up",
-        "triangle-down",
-        "triangle-left",
-        "triangle-right",
-        "pentagon",
-        "hexagon",
-        "octagon",
-        "star",
-        "hexagram",
-    ]
 
     fig = make_subplots(
         rows=2,
         cols=2,
         shared_xaxes=True,
-        # shared_yaxes=True,
+        shared_yaxes=True,
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
@@ -230,7 +227,7 @@ def plot_loss_and_divergence(
 
 def plot_warmups():
     num_samples = 1024
-    for model_size in [14, 70]:
+    for model_size in [14]: # 70
         model_metadata = [
             (f"pythia-{model_size}m", f"{model_size}M (fast warmup)"),
             (f"pythia-{model_size}m-warmup01", f"{model_size}M (slow warmup)"),
@@ -245,21 +242,6 @@ def plot_warmups():
             )
             model_df["model_name"] = model_name
             model_df["pretty_model_name"] = pretty_model_name
-
-            # model_df = model_df.replace(["[-1]", 0.1, -0.0], np.nan)
-            # mask = model_df.isnull().any(axis=1)
-            # excluded_columns = ['step', 'model_name', 'pretty_model_name', 'seed']
-            # model_df.loc[
-            #     mask, 
-            #     [col for col in model_df.columns if not col in excluded_columns]
-            # ] = np.nan
-            
-            # model_df.to_csv(
-            #     Path.cwd()
-            #     / "output"
-            #     / "24-06-04"
-            #     / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-            # )
             model_dfs.append(model_df)
         df = pd.concat(model_dfs)
 

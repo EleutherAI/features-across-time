@@ -31,8 +31,7 @@ def run_checkpoint_experiment_workers(
     experiment: Experiment, 
     worker: Callable[[int, Experiment, str, str, str, list[str]], pd.DataFrame],
     ngram_path: str, 
-    pile_path: str, 
-    tmp_cache_path: str,
+    pile_path: str,
     gpu_ids: list[int] = None
 ):
     if not gpu_ids:
@@ -53,7 +52,6 @@ def run_checkpoint_experiment_workers(
             experiment,
             ngram_path,
             pile_path,
-            tmp_cache_path,
             step_indices[i],
         )
         for i, gpu_id in enumerate(gpu_ids[:len(step_indices)])

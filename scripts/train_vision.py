@@ -467,6 +467,7 @@ def run_model(
 
 
 if __name__ == "__main__":
+    # TODO enable naming runs like with w2s
     os.environ["WANDB_PROJECT"] = "features-across-time"
 
     parser = ArgumentParser()
@@ -476,7 +477,8 @@ if __name__ == "__main__":
             "mnist", 
             "evanarlian/imagenet_1k_resized_256", 
             "fashion_mnist",
-            "cifarnet"
+            "cifarnet",
+            "high_var"
         ], nargs="+")
     parser.add_argument(
         "--nets",

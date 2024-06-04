@@ -214,12 +214,10 @@ def main(ngram_path: str, pile_path: str):
             experiment,
             worker,
         )
-
         df.to_csv(
             Path.cwd()
             / "output"
-            / f"clean_means_ngrams_model_{experiment['model_name']}_\
-{experiment['num_samples']}.csv",
+            / f"ngrams_{experiment['model_name']}_{experiment['num_samples']}.csv",
             index=False,
         )
 

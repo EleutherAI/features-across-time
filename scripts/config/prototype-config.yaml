@@ -5,12 +5,13 @@ downcast_bf16: 'no'
 dynamo_config:
   dynamo_backend: INDUCTOR
 fsdp_config: {}
+# FSDP w/ floaf16, (float32 adam buffers/gradients)
 machine_rank: 0
 main_training_function: main
 # mixed_precision: fp16
 num_machines: 1
-num_processes: 8
-gpu_ids: "0, 1, 2, 3, 4, 5, 6, 7"
+num_processes: 2
+gpu_ids: "0, 1"
 rdzv_backend: static
 same_network: true
 tpu_env: []

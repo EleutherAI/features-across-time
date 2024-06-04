@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy import stats
 
 
 def kaleido_workaround():
@@ -28,6 +29,13 @@ def base_2_log_ticks(values, step=1):
 def hex_to_rgba(hex_color, opacity=0.5):
     r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
     return f"rgba({r}, {g}, {b}, {opacity})"
+
+
+def get_confidence_intervals(
+    mean: float, num_items: int, confidence=0.95
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+    sem = np.sqrt(mean / num_items)
+    return stats.norm.interval(confidence, loc=mean, scale=sem)
 
 
 def plot_bpb_and_divergences(
@@ -82,8 +90,6 @@ def plot_bpb_and_divergences(
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
-            # "KL divergence(learned bigrams | dataset bigrams)"
-            # "Trigram sequence loss across time"
         ]
         + [label[1] for label in div_metadata],
         horizontal_spacing=0.02,
@@ -91,20 +97,19 @@ def plot_bpb_and_divergences(
     )
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):  # "3_gram"
+        df[f"mean_{ngram}_loss_bottom_conf"] = df[f'mean_{ngram}_loss'].map(lambda x : get_confidence_intervals(x, 1024)[0])
+        df[f"mean_{ngram}_loss_top_conf"] = df[f'mean_{ngram}_loss'].map(lambda x : get_confidence_intervals(x, 1024)[1])
+
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
-        df[f"mean_{ngram}_bpb_bottom_conf"] = (
-            df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
-        )
-        df[f"mean_{ngram}_bpb_top_conf"] = (
-            df[f"top_conf_{ngram}_loss"] * bpb_coefficient
-        )
+        df[f"mean_{ngram}_bpb_bottom_conf"] = df[f"mean_{ngram}_loss_bottom_conf"] * bpb_coefficient
+        df[f"mean_{ngram}_bpb_top_conf"] = df[f"mean_{ngram}_loss_top_conf"] * bpb_coefficient
 
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
             color = (
-                px.colors.qualitative.Plotly[i + 1]
+                px.colors.qualitative.Plotly[i]
                 if qualitative
-                else px.colors.sequential.Plasma_r[i + 1]
+                else px.colors.sequential.Plasma_r[i]
             )
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
@@ -162,6 +167,9 @@ def plot_bpb_and_divergences(
             )
 
     for label, pretty_label, y_range, row, col in div_metadata:
+        df[f"top_conf_{label}"] = df[f'mean_{label}'].map(lambda x : get_confidence_intervals(x, 1024)[0])
+        df[f"bottom_conf_{label}"] = df[f'mean_{label}'].map(lambda x : get_confidence_intervals(x, 1024)[1])
+
         df[f"top_conf_{label}_bpb"] = df[f"top_conf_{label}"] * bpb_coefficient
         df[f"bottom_conf_{label}_bpb"] = df[f"bottom_conf_{label}"] * bpb_coefficient
         df[f"mean_{label}_bpb"] = df[f"mean_{label}"] * bpb_coefficient
@@ -169,9 +177,9 @@ def plot_bpb_and_divergences(
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
             color = (
-                px.colors.qualitative.Plotly[i + 1]
+                px.colors.qualitative.Plotly[i]
                 if qualitative
-                else px.colors.sequential.Plasma_r[i + 1]
+                else px.colors.sequential.Plasma_r[i]
             )
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
@@ -217,8 +225,9 @@ def plot_bpb_and_divergences(
             )
     fig.update_layout(
         width=1000,
-        height=600,
+        height=800,
         legend=dict(
+            title="Pythia loss",
             x=0.98,
             y=0.98,
             xanchor="right",
@@ -226,7 +235,7 @@ def plot_bpb_and_divergences(
             font=dict(size=8),
             bgcolor="rgba(255, 255, 255, 0.85)",
         ),
-        margin=dict(l=20, r=20, t=50, b=60),
+        margin=dict(l=20, r=20, t=50, b=80),
     )
 
     fig.update_xaxes(
@@ -266,7 +275,6 @@ def plot_model_sizes(bpb_coefficient: float, entropies_bpb: list[float]):
     model_series = "Pythia"
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
-
     model_metadata = [
         ("pythia-14m", "14M"),
         ("pythia-70m", "70M"),
@@ -276,7 +284,7 @@ def plot_model_sizes(bpb_coefficient: float, entropies_bpb: list[float]):
         ("pythia-1.4b", "1.4B"),
         ("pythia-2.8b", "2.8B"),
         ("pythia-6.9b", "6.9B"),
-        # ("pythia-12b", "12B"),
+        ("pythia-12b", "12B"),
         # ("es_pythia-14m", "14M"),
         # ("es_pythia-70m", "70M"),
         # ("es_pythia-160m", "160M"),
@@ -288,32 +296,11 @@ def plot_model_sizes(bpb_coefficient: float, entropies_bpb: list[float]):
     for model_name, pretty_model_name in model_metadata:
         dfs = []
         model_df = pd.read_csv(
-            # Path('/')
-            # / 'mnt'
-            # / 'ssd-1'
-            # / 'lucia'
-            # / 'output' /
-            Path.cwd() / 
-            "output" / 
-            "24-06-04" /
-            f"means_ngrams_model_{model_name}_{num_samples}.csv" # _[1 2]
+            Path.cwd()
+            / "output"
+            / "24-06-05"
+            / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
-
-        # supplementary_kl_div_path = (
-        #     Path('/')
-        #     / 'mnt'
-        #     / 'ssd-1'
-        #     / 'lucia'
-        #     / 'output'
-        #     / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
-        # )
-        # model_df = add_kl_data(model_df, supplementary_kl_div_path)
-        # model_df['mean_1_gram_loss'] = model_df['mean_unigram_loss']
-        # model_df['bottom_conf_1_gram_loss'] = model_df['bottom_conf_unigram_loss']
-        # model_df['top_conf_1_gram_loss'] = model_df['top_conf_unigram_loss']
-        # model_df['mean_2_gram_loss'] = model_df['mean_bigram_loss']
-        # model_df['bottom_conf_2_gram_loss'] = model_df['bottom_conf_bigram_loss']
-        # model_df['top_conf_2_gram_loss'] = model_df['top_conf_bigram_loss']
 
         dfs.append(model_df)
 

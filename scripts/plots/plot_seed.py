@@ -2,18 +2,17 @@ import os
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import add_kl_data, base_2_log_ticks, hex_to_rgba, kaleido_workaround
+from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
 from plotly.subplots import make_subplots
 
 
-def plot_seed_loss(df: pd.DataFrame, debug: bool):
-    if not debug:
-        kaleido_workaround()
+def plot_seed_loss(df: pd.DataFrame, bpb_coefficient = 0.3650388, entropies = [2.89, 2.04]):
+    kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
-    bpb_coefficient = 0.3650388
     marker_series = [
         "circle",
         "square",
@@ -130,15 +129,16 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
         fig.update_yaxes(range=[0.3, 0.8], row=3)
         return fig
 
-    entropies = [2.89, 2.04]
-    for idx, ngram in enumerate(["unigram", "bigram"]):
+    for idx, ngram in enumerate(["1_gram", "2_gram"]):
+        title = "Unigram" if ngram == "1_gram" else "Bigram"
+
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         fig = create_row(
             df,
-            f"{ngram.title()} sequence loss across time",
+            f"{title} sequence loss across time",
             f"mean_{ngram}_bpb",
             ytitle="Loss",
-            show_legend=ngram == "unigram",
+            show_legend=ngram == "1_gram",
         )
 
         for col in [1, 2, 3, 4]:
@@ -158,24 +158,22 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
 
     div_metadata = [
         (
-            "unigram_logit_kl_div",
+            "1-gram_logit_kl_div",
             "D<sub>KL</sub>(unigram model || Pythia) across time",
-            [0, 7],
         ),
         (
-            "bigram_logit_kl_div",
+            "2-gram_logit_kl_div",
             "D<sub>KL</sub>(bigram model || Pythia) across time",
-            [0, 7],
         ),
     ]
-    for label, pretty_label, y_range in div_metadata:
+    for label, pretty_label in div_metadata:
         df[f"mean_{label}_bpb"] = df[f"mean_{label}"] * bpb_coefficient
         fig = create_row(
             df,
             pretty_label,
             f"mean_{label}_bpb",
             ytitle="KL divergence",
-            show_xaxis=label == "bigram_logit_kl_div",
+            show_xaxis=label == "2-gram_logit_kl_div",
         )
 
         image_name = Path.cwd() / "images" / f"seed_{label}.pdf"
@@ -183,7 +181,6 @@ def plot_seed_loss(df: pd.DataFrame, debug: bool):
 
 
 def main():
-    debug = False
     num_samples = 1024
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
@@ -200,22 +197,15 @@ def main():
             seed_df = pd.read_csv(
                 Path.cwd()
                 / "output"
+                / "24-06-04"
                 / f"means_ngrams_model_{model_name}-seed{i}_{num_samples}.csv"
             )
-
-            supplementary_kl_div_path = (
-                Path.cwd()
-                / "output"
-                / f"means_ngrams_model_{model_name}-seed{i}_{num_samples}_kl_div.csv"
-            )
-            seed_df = add_kl_data(seed_df, supplementary_kl_div_path)
             seed_df["seed"] = i
             seed_df["model_name"] = model_name
             seed_df["pretty_model_name"] = pretty_model_name
-            seed_df["step"] = seed_df["step"] + 1  # 1-index steps
             seed_dfs.append(seed_df)
     df = pd.concat(seed_dfs)
-    plot_seed_loss(df, debug)
+    plot_seed_loss(df)
 
 
 if __name__ == "__main__":

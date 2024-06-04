@@ -3,27 +3,29 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import add_kl_data, base_2_log_ticks, hex_to_rgba, kaleido_workaround
+from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
 from plotly.subplots import make_subplots
+import numpy as np
 
-
-def plot_loss_and_divergence(df: pd.DataFrame, image_name: str, debug: bool):
-    if not debug:
-        kaleido_workaround()
+def plot_loss_and_divergence(
+    df: pd.DataFrame, 
+    image_name: str,
+    bpb_coefficient = 0.3650388,
+    entropies = [2.89, 2.04]
+):
+    kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
-    bpb_coefficient = 0.3650388
-
     div_metadata = [
         (
-            "unigram_logit_kl_div",
+            "1-gram_logit_kl_div",
             "D<sub>KL</sub>(unigram model || Pythia) across time",
-            [0, 7],
+            [0, 1],
             2,
             2,
         ),
         (
-            "bigram_logit_kl_div",
+            "2-gram_logit_kl_div",
             "D<sub>KL</sub>(bigram model || Pythia) across time",
             [0, 7],
             2,
@@ -46,16 +48,12 @@ def plot_loss_and_divergence(df: pd.DataFrame, image_name: str, debug: bool):
         "star",
         "hexagram",
     ]
-    entropies = [2.89, 2.04]
-
-    # log_spaced_indices = np.unique(np.logspace(0, np.log2(df['index'].max()), base=2, num=20).astype(int))
-    # df = df[df['index'].isin(log_spaced_indices)]
 
     fig = make_subplots(
         rows=2,
         cols=2,
         shared_xaxes=True,
-        shared_yaxes=True,
+        # shared_yaxes=True,
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
@@ -65,7 +63,7 @@ def plot_loss_and_divergence(df: pd.DataFrame, image_name: str, debug: bool):
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["unigram", "bigram"]):
+    for idx, ngram in enumerate(["1_gram", "2_gram"]):
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"mean_{ngram}_bpb_bottom_conf"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -230,7 +228,7 @@ def plot_loss_and_divergence(df: pd.DataFrame, image_name: str, debug: bool):
     fig.write_image(image_name, format="pdf")
 
 
-def plot_warmups(debug: bool):
+def plot_warmups():
     num_samples = 1024
     for model_size in [14, 70]:
         model_metadata = [
@@ -242,30 +240,35 @@ def plot_warmups(debug: bool):
             model_df = pd.read_csv(
                 Path.cwd()
                 / "output"
+                / "24-06-04"
                 / f"means_ngrams_model_{model_name}_{num_samples}.csv"
             )
-            supplementary_kl_div_path = (
-                Path.cwd()
-                / "output"
-                / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
-            )
-            model_df = add_kl_data(model_df, supplementary_kl_div_path)
-
-            model_df["step"] = model_df["step"] + 1
             model_df["model_name"] = model_name
             model_df["pretty_model_name"] = pretty_model_name
 
+            # model_df = model_df.replace(["[-1]", 0.1, -0.0], np.nan)
+            # mask = model_df.isnull().any(axis=1)
+            # excluded_columns = ['step', 'model_name', 'pretty_model_name', 'seed']
+            # model_df.loc[
+            #     mask, 
+            #     [col for col in model_df.columns if not col in excluded_columns]
+            # ] = np.nan
+            
+            # model_df.to_csv(
+            #     Path.cwd()
+            #     / "output"
+            #     / "24-06-04"
+            #     / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+            # )
             model_dfs.append(model_df)
         df = pd.concat(model_dfs)
 
         image_name = Path.cwd() / "images" / f"warmups-{model_size}m.pdf"
-        plot_loss_and_divergence(df, image_name, debug)
+        plot_loss_and_divergence(df, image_name)
 
 
 def main():
-    debug = False
-
-    plot_warmups(debug)
+    plot_warmups()
 
 
 if __name__ == "__main__":

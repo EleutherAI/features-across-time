@@ -10,17 +10,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def add_kl_data(df, supplementary_path):
-    if os.path.exists(supplementary_path):
-        print("supplementary data detected, merging...")
-        supplementary_kl_div_df = pd.read_csv(supplementary_path)
-        for label in ["1-gram_logit_kl_div", "2-gram_logit_kl_div"]:
-            df[f"mean_{label}"] = supplementary_kl_div_df[f"mean_{label}"]
-            df[f"bottom_conf_{label}"] = supplementary_kl_div_df[f"bottom_conf_{label}"]
-            df[f"top_conf_{label}"] = supplementary_kl_div_df[f"top_conf_{label}"]
-    return df
-
-
 def kaleido_workaround():
     # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
     with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
@@ -49,10 +38,7 @@ def plot_bpb_and_divergences(
     ngram_entropies_bpb: list[int],
     qualitative=False,
 ):
-    df = df[df["step"] != 0]  # Step = 0 gives final step, which we collect elsewhere
-
     kaleido_workaround()
-
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
 
     div_metadata = [
@@ -90,13 +76,13 @@ def plot_bpb_and_divergences(
 
     fig = make_subplots(
         rows=2,
-        cols=3,
+        cols=2,
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
-            "KL divergence(learned bigrams | dataset bigrams)"
+            # "KL divergence(learned bigrams | dataset bigrams)"
             # "Trigram sequence loss across time"
         ]
         + [label[1] for label in div_metadata],
@@ -116,9 +102,9 @@ def plot_bpb_and_divergences(
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
             color = (
-                px.colors.qualitative.Plotly[i]
+                px.colors.qualitative.Plotly[i + 1]
                 if qualitative
-                else px.colors.sequential.Plasma_r[i]
+                else px.colors.sequential.Plasma_r[i + 1]
             )
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
@@ -183,9 +169,9 @@ def plot_bpb_and_divergences(
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
             color = (
-                px.colors.qualitative.Plotly[i]
+                px.colors.qualitative.Plotly[i + 1]
                 if qualitative
-                else px.colors.sequential.Plasma_r[i]
+                else px.colors.sequential.Plasma_r[i + 1]
             )
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
@@ -225,11 +211,10 @@ def plot_bpb_and_divergences(
                     name=model,
                     line=dict(color=color),
                     showlegend=False,
-                ),  # row==1 and col==2
+                ),
                 row=row,
                 col=col,
             )
-
     fig.update_layout(
         width=1000,
         height=600,
@@ -276,61 +261,62 @@ def plot_bpb_and_divergences(
     fig.write_image(image_name, format="pdf")
 
 
-def plot_model_sizes(debug: bool):
+def plot_model_sizes(bpb_coefficient: float, entropies_bpb: list[float]):
     num_samples = 1024
-    model_series = "Pythia"  # "Mamba"
+    model_series = "Pythia"
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
-    # pile
-    # bpb_coefficient = 0.3650388
-    # es 1 billion
-    bpb_coefficient = 0.4157027
 
     model_metadata = [
-        # ("pythia-14m", "14M", 8),
-        # ("pythia-70m", "70M", 8),
-        # ("pythia-160m", "160M", 8),
-        # ("pythia-410m", "410M", 8),
-        # ("pythia-1b", "1B", 8),
-        # ("pythia-1.4b", "1.4B", 8),
-        # ("pythia-2.8b", "2.8B", 8),
-        # ("pythia-6.9b", "6.9B", 8),
-        # ("pythia-12b", "12B", 8),
-        # ("finetune_pythia-14m", "14M", 8),
-        # ("finetune_pythia-70m", "70M", 8),
-        ("finetune_pythia-160m", "160M", 8),
-        # ("finetune_pythia-410m", "410M", 8),
-        # ("finetune_pythia-1b", "1B", 8),
-        # ("finetune_pythia-1.4b", "1.4B", 8),
+        ("pythia-14m", "14M"),
+        ("pythia-70m", "70M"),
+        ("pythia-160m", "160M"),
+        ("pythia-410m", "410M"),
+        ("pythia-1b", "1B"),
+        ("pythia-1.4b", "1.4B"),
+        ("pythia-2.8b", "2.8B"),
+        ("pythia-6.9b", "6.9B"),
+        # ("pythia-12b", "12B"),
+        # ("es_pythia-14m", "14M"),
+        # ("es_pythia-70m", "70M"),
+        # ("es_pythia-160m", "160M"),
+        # ("es_pythia-410m", "410M"),
+        # ("es_pythia-1b", "1B"),
+        # ("es_pythia-1.4b", "1.4B"),
     ]
-    # model_metadata = [
-    #     ("mamba-160m-hf", "160m", 6),
-    #     ("Mamba-370M", "370M", 7)
-    # ]
     model_dfs = []
-    for model_name, pretty_model_name, num_chunks in model_metadata:
+    for model_name, pretty_model_name in model_metadata:
         dfs = []
-        # for i in range(num_chunks):
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"{model_name}_{num_samples}_[1, 2].csv"
+            # Path('/')
+            # / 'mnt'
+            # / 'ssd-1'
+            # / 'lucia'
+            # / 'output' /
+            Path.cwd() / 
+            "output" / 
+            "24-06-04" /
+            f"means_ngrams_model_{model_name}_{num_samples}.csv" # _[1 2]
         )
-        dfs.append(model_df)
-
-        # trigram_df = pd.read_csv(
-        #     Path.cwd() /
-        #     "output" /
-        #     f"means_ngrams_model_{model_name}_{num_samples}_[3].csv"
-        # )
-        # dfs.append(trigram_df)
-        # model_df = pd.concat(dfs)
 
         # supplementary_kl_div_path = (
-        #     Path.cwd()
-        #     / "output"
+        #     Path('/')
+        #     / 'mnt'
+        #     / 'ssd-1'
+        #     / 'lucia'
+        #     / 'output'
         #     / f"means_ngrams_model_{model_name}_{num_samples}_kl_div.csv"
         # )
         # model_df = add_kl_data(model_df, supplementary_kl_div_path)
-        model_df["step"] = model_df["step"] + 1
+        # model_df['mean_1_gram_loss'] = model_df['mean_unigram_loss']
+        # model_df['bottom_conf_1_gram_loss'] = model_df['bottom_conf_unigram_loss']
+        # model_df['top_conf_1_gram_loss'] = model_df['top_conf_unigram_loss']
+        # model_df['mean_2_gram_loss'] = model_df['mean_bigram_loss']
+        # model_df['bottom_conf_2_gram_loss'] = model_df['bottom_conf_bigram_loss']
+        # model_df['top_conf_2_gram_loss'] = model_df['top_conf_bigram_loss']
+
+        dfs.append(model_df)
+
         model_df["model_name"] = model_name
         model_df["pretty_model_name"] = pretty_model_name
 
@@ -339,18 +325,19 @@ def plot_model_sizes(debug: bool):
 
     image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
 
-    es_entropies_bpb = [2.72, 1.50]
-
     plot_bpb_and_divergences(
-        df, image_name, bpb_coefficient, model_series, es_entropies_bpb
+        df, image_name, bpb_coefficient, model_series, entropies_bpb
     )
 
 
 def main():
-    debug = False
+    # es_bpb_coefficient = 0.4157027
+    # es_entropies_bpb = [2.72, 1.50]
 
-    plot_model_sizes(debug)
-    # plot_warmups(debug)
+    pile_bpb_coefficient = 0.3650388
+    pile_entropies_bpb = [2.89, 2.04]
+
+    plot_model_sizes(pile_bpb_coefficient, pile_entropies_bpb)
 
 
 if __name__ == "__main__":

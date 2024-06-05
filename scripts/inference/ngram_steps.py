@@ -1,5 +1,6 @@
 import math
 import pickle
+import time
 from argparse import ArgumentParser
 from collections import defaultdict
 from pathlib import Path
@@ -111,19 +112,24 @@ def worker(
     num_iters = math.ceil(num_samples / batch_size)
     pbar = tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
-        try:
-            model = AutoModelForCausalLM.from_pretrained(
-                f"EleutherAI/{model_name}",
-                torch_dtype="auto",
-                revision=f"step{step}",
-            ).cuda()
-        except Exception as e:
-            print("Failed to retrieve model at step", step, e)
-            for n in ngram_orders:
-                data[f"mean_{n}_gram_loss"].append(np.nan)
-                data[f"mean_{n}_gram_kl_div"].append(np.nan)
-                data[f"mean_{n}_gram_js_div"].append(np.nan)
-            continue
+        for retry in range(3):
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    f"EleutherAI/{model_name}",
+                    torch_dtype="auto",
+                    revision=f"step{step}",
+                ).cuda()
+                break
+            except Exception as e:
+                if retry < 2:
+                    print(f"Attempt {retry + 1} failed, retrying in 2 seconds...", e)
+                    time.sleep(2)
+                else:
+                    print("Failed to retrieve model at step", step, e)
+                    for n in ngram_orders:
+                        data[f"mean_{n}_gram_loss"].append(np.nan)
+                        data[f"mean_{n}_gram_kl_div"].append(np.nan)
+                        data[f"mean_{n}_gram_js_div"].append(np.nan)
 
         pile = iter(pile_ds)
         ngram_iters = {n: iter(ds) for n, ds in ngram_data.items()}

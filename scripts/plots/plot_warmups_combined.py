@@ -3,7 +3,12 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
+from plot_ngram import (
+    base_2_log_ticks,
+    get_confidence_intervals,
+    hex_to_rgba,
+    kaleido_workaround,
+)
 from plotly.subplots import make_subplots
 
 marker_series = [
@@ -23,8 +28,13 @@ marker_series = [
     "hexagram",
 ]
 
+
 def plot_loss_and_divergence(
-    df: pd.DataFrame, image_name: str, bpb_coefficient=0.3650388, entropies=[2.89, 2.04]
+    df: pd.DataFrame,
+    image_name: str,
+    bpb_coefficient=0.3650388,
+    entropies=[2.89, 2.04],
+    num_samples=1024,
 ):
     kaleido_workaround()
 
@@ -61,13 +71,18 @@ def plot_loss_and_divergence(
     )
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):
+        df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[0]
+        )
+        df[f"top_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[1]
+        )
+
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
-        df[f"mean_{ngram}_bpb_bottom_conf"] = (
+        df[f"bottom_conf_{ngram}_bpb"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
         )
-        df[f"mean_{ngram}_bpb_top_conf"] = (
-            df[f"top_conf_{ngram}_loss"] * bpb_coefficient
-        )
+        df[f"top_conf_{ngram}_bpb"] = df[f"top_conf_{ngram}_loss"] * bpb_coefficient
 
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
@@ -77,7 +92,7 @@ def plot_loss_and_divergence(
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"mean_{ngram}_bpb_top_conf"],
+                    y=df_model[f"top_conf_{ngram}_bpb"],
                     fill=None,
                     mode="lines",
                     line=dict(width=0),
@@ -90,7 +105,7 @@ def plot_loss_and_divergence(
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"mean_{ngram}_bpb_bottom_conf"],
+                    y=df_model[f"bottom_conf_{ngram}_bpb"],
                     mode="lines",
                     line=dict(width=0),
                     fill="tonexty",
@@ -227,7 +242,7 @@ def plot_loss_and_divergence(
 
 def plot_warmups():
     num_samples = 1024
-    for model_size in [14]: # 70
+    for model_size in [14]:  # 70
         model_metadata = [
             (f"pythia-{model_size}m", f"{model_size}M (fast warmup)"),
             (f"pythia-{model_size}m-warmup01", f"{model_size}M (slow warmup)"),
@@ -237,7 +252,6 @@ def plot_warmups():
             model_df = pd.read_csv(
                 Path.cwd()
                 / "output"
-                / "24-06-04"
                 / f"means_ngrams_model_{model_name}_{num_samples}.csv"
             )
             model_df["model_name"] = model_name

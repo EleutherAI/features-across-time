@@ -97,20 +97,24 @@ def plot_bpb_and_divergences(
     )
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):  # "3_gram"
-        df[f"mean_{ngram}_loss_bottom_conf"] = df[f'mean_{ngram}_loss'].map(lambda x : get_confidence_intervals(x, 1024)[0])
-        df[f"mean_{ngram}_loss_top_conf"] = df[f'mean_{ngram}_loss'].map(lambda x : get_confidence_intervals(x, 1024)[1])
+        df[f"mean_{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
+            lambda x: get_confidence_intervals(x, 1024)[0]
+        )
+        df[f"mean_{ngram}_loss_top_conf"] = df[f"mean_{ngram}_loss"].map(
+            lambda x: get_confidence_intervals(x, 1024)[1]
+        )
 
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
-        df[f"mean_{ngram}_bpb_bottom_conf"] = df[f"mean_{ngram}_loss_bottom_conf"] * bpb_coefficient
-        df[f"mean_{ngram}_bpb_top_conf"] = df[f"mean_{ngram}_loss_top_conf"] * bpb_coefficient
+        df[f"mean_{ngram}_bpb_bottom_conf"] = (
+            df[f"mean_{ngram}_loss_bottom_conf"] * bpb_coefficient
+        )
+        df[f"mean_{ngram}_bpb_top_conf"] = (
+            df[f"mean_{ngram}_loss_top_conf"] * bpb_coefficient
+        )
 
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
-            color = (
-                px.colors.qualitative.Plotly[i]
-                if qualitative
-                else px.colors.sequential.Plasma_r[i]
-            )
+            color = px.colors.sequential.Plasma_r[i]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
             fig.add_trace(
@@ -167,8 +171,12 @@ def plot_bpb_and_divergences(
             )
 
     for label, pretty_label, y_range, row, col in div_metadata:
-        df[f"top_conf_{label}"] = df[f'mean_{label}'].map(lambda x : get_confidence_intervals(x, 1024)[0])
-        df[f"bottom_conf_{label}"] = df[f'mean_{label}'].map(lambda x : get_confidence_intervals(x, 1024)[1])
+        df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
+            lambda x: get_confidence_intervals(x, 1024)[0]
+        )
+        df[f"bottom_conf_{label}"] = df[f"mean_{label}"].map(
+            lambda x: get_confidence_intervals(x, 1024)[1]
+        )
 
         df[f"top_conf_{label}_bpb"] = df[f"top_conf_{label}"] * bpb_coefficient
         df[f"bottom_conf_{label}_bpb"] = df[f"bottom_conf_{label}"] * bpb_coefficient
@@ -176,11 +184,7 @@ def plot_bpb_and_divergences(
 
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
-            color = (
-                px.colors.qualitative.Plotly[i]
-                if qualitative
-                else px.colors.sequential.Plasma_r[i]
-            )
+            color = px.colors.sequential.Plasma_r[i]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
             fig.add_trace(

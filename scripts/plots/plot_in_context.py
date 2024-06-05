@@ -1,69 +1,49 @@
 import os
 from pathlib import Path
-import math
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
 from plotly.subplots import make_subplots
 
-from script_utils.experiment import Experiment
-from script_utils.load_model import get_auto_tokenizer, get_zyphra_mamba, get_hails_mamba, get_auto_model
+from scripts.plots.plot_ngram import (
+    base_2_log_ticks,
+    get_confidence_intervals,
+    hex_to_rgba,
+    kaleido_workaround,
+)
+
+marker_series = [
+    "circle",
+    "square",
+    "diamond",
+    "cross",
+    "x",
+    "triangle-up",
+    "triangle-down",
+    "triangle-left",
+    "triangle-right",
+    "pentagon",
+    "hexagon",
+    "octagon",
+    "star",
+    "hexagram",
+]
 
 
-def add_steps(df, supplementary_path):
-    if os.path.exists(supplementary_path):
-        print("supplementary data detected, merging...")
-        supplementary_df = pd.read_csv(supplementary_path)
-        df = pd.concat([df, supplementary_df])
-    return df
-
-
-def main(debug: bool, experiment: Experiment):
-    if not debug:
-        kaleido_workaround()
+def main(
+    model_name: str, num_samples: int, bpb_coefficient=0.3650388, entropies=[2.89, 2.04]
+):
+    kaleido_workaround()
 
     os.makedirs(Path.cwd() / "images", exist_ok=True)
-    image_name = Path.cwd() / "images" / f"in-context-{experiment.team}--{experiment.model_name}.pdf"
+    image_name = Path.cwd() / "images" / f"in-context-EleutherAI--{model_name}.pdf"
 
-    bpb_coefficient = 0.3650388
-    entropies = [2.89, 2.04]
-    marker_series = [
-        "circle",
-        "square",
-        "diamond",
-        "cross",
-        "x",
-        "triangle-up",
-        "triangle-down",
-        "triangle-left",
-        "triangle-right",
-        "pentagon",
-        "hexagon",
-        "octagon",
-        "star",
-        "hexagram",
-    ]
-
-    df = pd.read_csv(Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps_[3].csv")
-    supplementary_path = (
-        Path.cwd() / "output" / f"{experiment.model_name}_{experiment.num_samples}_steps_additional.csv"
-    )
-    df = add_steps(df, supplementary_path)
+    df = pd.read_csv(Path.cwd() / "output" / f"{model_name}_{num_samples}_steps.csv")
     tick_values, tick_texts = base_2_log_ticks(df["index"])
 
-    # Add missing step column
-    # steps = [16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000]
-    # group_numbers = df["index"].eq(0).cumsum() - 1
-    # df["step"] = group_numbers.apply(
-    #     lambda x: experiment.steps[x] if x < len(experiment.steps) else experiment.steps[-1]
-    # )
-
-    
-    # df['step'] = df['step'].astype(int)
-    df['step'] = pd.to_numeric(df['step'], errors='coerce').fillna(0).astype(int)
+    df["step"] = pd.to_numeric(df["step"], errors="coerce").fillna(0).astype(int)
 
     # Remove several steps because their lines' confidence intervals overlap
     df = df[df["step"] != 0]
@@ -78,7 +58,6 @@ def main(debug: bool, experiment: Experiment):
     df = df[df["step"] != 80_000]
     df = df[df["step"] != 320_000]
 
-
     # Make index 1-indexed
     df["index"] = df["index"] + 1
 
@@ -91,7 +70,6 @@ def main(debug: bool, experiment: Experiment):
     )
     df = df[df["index"].isin(log_spaced_indices)]
 
-    # Order data
     step_order = sorted(df["step"].unique())
 
     fig = make_subplots(
@@ -108,7 +86,14 @@ def main(debug: bool, experiment: Experiment):
         vertical_spacing=0.05,
     )
 
-    for idx, ngram in enumerate(["3-gram"]): # "1-gram", "2-gram", 
+    for idx, ngram in enumerate(["1-gram", "2-gram"]):  # "3-gram"
+        df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[0]
+        )
+        df[f"top_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[1]
+        )
+
         df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
         df[f"bottom_conf_{ngram}_bpb"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
@@ -118,7 +103,6 @@ def main(debug: bool, experiment: Experiment):
         # For some reason the legend items are listed in reverse order
         for i, step in enumerate(reversed(step_order)):
             group_df = df[df["step"] == step]
-            # (px.colors.qualitative.Plotly + px.colors.qualitative.D3)
             color = px.colors.sequential.Plasma_r[i]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
@@ -208,60 +192,17 @@ def main(debug: bool, experiment: Experiment):
     )
     fig.write_image(image_name, format="pdf")
 
-    #  experiment = Experiment(
-    #     num_samples=1024,
-    #     team="hails", 
-    #     model_name="mamba-160m-hf", 
-    #     batch_size=1,
-    #     seq_len=2049, 
-    #     steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
-    #     d_vocab=50_277,
-    #     get_model=get_hails_mamba, 
-    #     get_tokenizer=get_auto_tokenizer,
-    #     eod_index=0
-    # )  
+
 if __name__ == "__main__":
-    experiments = [
-        Experiment(
-            num_samples=1024,
-            batch_size=batch_size, 
-            seq_len=2048, 
-            team="EleutherAI", 
-            model_name=model_name, 
-            get_model=get_auto_model, 
-            get_tokenizer=get_auto_tokenizer,
-            d_vocab=50_277,
-            # roughly log spaced steps + final step
-            steps=[0, 1, 2, 4, 8, 16, 256, 1000, 8000, 33_000, 66_000, 131_000, 143_000],
-            ngram_orders=[3],
-            eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id
-        )
-        for model_name, batch_size in [
-            # ("pythia-14m", 4),
-            # ("pythia-70m", 4),
-            # ("pythia-160m", 4),
-            # ("pythia-410m", 4),
-            # ("pythia-1b", 4),
-            # ("pythia-1.4b", 4),
-            # ("pythia-2.8b", 4),
-            # ("pythia-6.9b", 1),
-            ("pythia-12b", 1),
-        ]
-    ]
-    # experiment = Experiment(
-    #     num_samples=1024,
-    #     batch_size=2, 
-    #     seq_len=2049, 
-    #     team="Zyphra", 
-    #     model_name="Mamba-370M", 
-    #     get_model=get_zyphra_mamba, 
-    #     get_tokenizer=get_neo_tokenizer,
-    #     d_vocab=50_277, # len(get_neo_tokenizer().vocab) 
-    #     # roughly log spaced steps + final step
-    #     steps=[2**i for i in range(int(math.log2(2048)) + 1)] + [10_000, 20_000, 40_000, 80_000, 160_000, 320_000, 610_000],
-    #     eod_index=get_neo_tokenizer().eos_token_id
-    # )
-    for experiment in experiments:
-        main(debug=False, experiment=experiment)
-
-
+    for model_name, batch_size in [
+        # ("pythia-14m", 4),
+        # ("pythia-70m", 4),
+        # ("pythia-160m", 4),
+        # ("pythia-410m", 4),
+        # ("pythia-1b", 4),
+        # ("pythia-1.4b", 4),
+        # ("pythia-2.8b", 4),
+        # ("pythia-6.9b", 1),
+        ("pythia-12b", 1),
+    ]:
+        main(model_name, num_samples=1024)

@@ -9,12 +9,8 @@ import plotly.graph_objects as go
 from scripts.plots.plot_ngram import base_2_log_ticks, kaleido_workaround
 
 
-def plot(
-    df: pd.DataFrame, image_name: str, debug: bool, model_series: str, num_samples: int
-):
-    print("plot")
-    if not debug:
-        kaleido_workaround()
+def plot(df: pd.DataFrame, image_name: str, model_series: str, num_samples: int):
+    kaleido_workaround()
 
     # es 1 billion words
     bpb_coefficient = 0.4157027
@@ -84,7 +80,6 @@ def plot(
 
 
 def main():
-    debug = False
     os.makedirs(Path.cwd() / "images", exist_ok=True)
 
     model_series = "Pythia"
@@ -111,7 +106,7 @@ def main():
         model_dfs.append(model_df)
 
     df = pd.concat(model_dfs)
-    plot(df, image_name, debug, model_series, num_samples)
+    plot(df, image_name, model_series, num_samples)
 
 
 if __name__ == "__main__":

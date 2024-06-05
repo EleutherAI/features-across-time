@@ -4,11 +4,20 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
+from plot_ngram import (
+    base_2_log_ticks,
+    hex_to_rgba,
+    kaleido_workaround,
+)
 from plotly.subplots import make_subplots
 
 
-def plot_seed_loss(df: pd.DataFrame, bpb_coefficient=0.3650388, entropies=[2.89, 2.04]):
+def plot_seed_loss(
+    df: pd.DataFrame,
+    bpb_coefficient=0.3650388,
+    entropies=[2.89, 2.04],
+    num_samples=1024,
+):
     kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
@@ -30,7 +39,13 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient=0.3650388, entropies=[2.89,
     ]
 
     def create_row(
-        df, title: str, name: str, ytitle, show_xaxis=False, show_legend=False, entropy=None
+        df,
+        title: str,
+        name: str,
+        ytitle,
+        show_xaxis=False,
+        show_legend=False,
+        entropy=None,
     ):
         fig = make_subplots(
             rows=1,
@@ -75,7 +90,7 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient=0.3650388, entropies=[2.89,
                 row=1,
                 col=model_index + 1,
             )
-            
+
         if entropy:
             for col in [1, 2, 3, 4]:
                 fig.add_shape(
@@ -88,7 +103,7 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient=0.3650388, entropies=[2.89,
                     row=1,
                     col=col,
                 )
-                
+
         fig.update_layout(
             width=1000,
             height=300,
@@ -151,7 +166,7 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient=0.3650388, entropies=[2.89,
             f"mean_{ngram}_bpb",
             ytitle="Loss",
             show_legend=ngram == "1_gram",
-            entropy=entropies[idx]
+            entropy=entropies[idx],
         )
 
         image_name = Path.cwd() / "images" / f"seed_{ngram}.pdf"
@@ -166,14 +181,6 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient=0.3650388, entropies=[2.89,
             "2-gram_logit_kl_div",
             "D<sub>KL</sub>(bigram model || Pythia) across time",
         ),
-        # (
-        #     "1-gram_logit_js_div",
-        #     "D<sub>JS</sub>(unigram model || Pythia) across time",
-        # ),
-        # (
-        #     "2-gram_logit_js_div",
-        #     "D<sub>JS</sub>(bigram model || Pythia) across time",
-        # ),
     ]
     for label, pretty_label in div_metadata:
         df[f"mean_{label}_bpb"] = df[f"mean_{label}"] * bpb_coefficient
@@ -206,7 +213,6 @@ def main():
             seed_df = pd.read_csv(
                 Path.cwd()
                 / "output"
-                / "24-06-04"
                 / f"means_ngrams_model_{model_name}-seed{i}_{num_samples}.csv"
             )
             seed_df["seed"] = i

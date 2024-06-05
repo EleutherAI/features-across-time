@@ -1,4 +1,5 @@
 import os
+from argparse import ArgumentParser
 from pathlib import Path
 
 import pandas as pd
@@ -9,25 +10,9 @@ from plot_ngram import (
     get_confidence_intervals,
     hex_to_rgba,
     kaleido_workaround,
+    marker_series,
 )
 from plotly.subplots import make_subplots
-
-marker_series = [
-    "circle",
-    "square",
-    "diamond",
-    "cross",
-    "x",
-    "triangle-up",
-    "triangle-down",
-    "triangle-left",
-    "triangle-right",
-    "pentagon",
-    "hexagon",
-    "octagon",
-    "star",
-    "hexagram",
-]
 
 
 def plot_loss_and_divergences(
@@ -40,7 +25,6 @@ def plot_loss_and_divergences(
     num_samples=1024,
 ):
     kaleido_workaround()
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
 
     fig = make_subplots(
         rows=1,
@@ -50,10 +34,17 @@ def plot_loss_and_divergences(
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
+            "D<sub>KL</sub>(unigram model || Pythia) across time",
+            "D<sub>KL</sub>(bigram model || Pythia) across time",
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.05,
     )
+    div_metadata = [
+        ("1-gram_logit_kl_div", [0, 7], 1, 2),
+        ("2-gram_logit_kl_div", [0, 7], 1, 1),
+    ]
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):
         df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
@@ -167,22 +158,6 @@ def plot_loss_and_divergences(
 
     fig.write_image(loss_image_name, format="pdf")
 
-    div_metadata = [
-        (
-            "1-gram_logit_kl_div",
-            "D<sub>KL</sub>(unigram model || Pythia) across time",
-            [0, 7],
-            1,
-            2,
-        ),
-        (
-            "2-gram_logit_kl_div",
-            "D<sub>KL</sub>(bigram model || Pythia) across time",
-            [0, 7],
-            1,
-            1,
-        ),
-    ]
     fig = make_subplots(
         rows=1,
         cols=2,
@@ -294,10 +269,7 @@ def plot_loss_and_divergences(
     fig.write_image(divergence_image_name, format="pdf")
 
 
-def plot_model_sizes():
-    num_samples = 1024
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
-
+def plot_model_sizes(data_path: Path, images_path: Path, num_samples: int):
     model_metadata = [
         ("pythia-14m", "14M"),
         ("pythia-70m", "70M"),
@@ -312,7 +284,7 @@ def plot_model_sizes():
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+            data_path / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
 
         model_df["step"] = model_df["step"] + 1
@@ -322,14 +294,12 @@ def plot_model_sizes():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    loss_image_name = Path.cwd() / "images" / "ngram-loss.pdf"
-    divergence_image_name = Path.cwd() / "images" / "ngram-divergence.pdf"
+    loss_image_name = images_path / "ngram-loss.pdf"
+    divergence_image_name = images_path / "ngram-divergence.pdf"
     plot_loss_and_divergences(df, loss_image_name, divergence_image_name)
 
 
-def plot_warmups():
-    num_samples = 1024
-
+def plot_warmups(data_path: Path, images_path: Path, num_samples: int):
     model_metadata = [
         ("pythia-14m", "14M (fast warmup)"),
         ("pythia-14m-warmup01", "14M (slow warmup)"),
@@ -337,7 +307,7 @@ def plot_warmups():
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+            data_path / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
         model_df["step"] = model_df["step"] + 1
         model_df["model_name"] = model_name
@@ -346,8 +316,8 @@ def plot_warmups():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    divergence_name = Path.cwd() / "images" / "warmups-14m-divergence.pdf"
-    loss_name = Path.cwd() / "images" / "warmups-14m-loss.pdf"
+    divergence_name = images_path / "warmups-14m-divergence.pdf"
+    loss_name = images_path / "warmups-14m-loss.pdf"
     plot_loss_and_divergences(df, loss_name, divergence_name, qualitative=True)
 
     model_metadata = [
@@ -357,7 +327,7 @@ def plot_warmups():
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            Path.cwd() / "output" / f"means_ngrams_model_{model_name}_{num_samples}.csv"
+            data_path / f"means_ngrams_model_{model_name}_{num_samples}.csv"
         )
         model_df["step"] = model_df["step"] + 1
         model_df["model_name"] = model_name
@@ -366,15 +336,25 @@ def plot_warmups():
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
-    loss_name = Path.cwd() / "images" / "warmups-70m-loss.pdf"
-    divergence_name = Path.cwd() / "images" / "warmups-70m-divergence.pdf"
+    loss_name = images_path / "warmups-70m-loss.pdf"
+    divergence_name = images_path / "warmups-70m-divergence.pdf"
     plot_loss_and_divergences(df, loss_name, divergence_name, qualitative=True)
 
 
-def main():
-    plot_model_sizes()
-    plot_warmups()
+def main(data_path: Path, images_path: Path, num_samples: int):
+    num_samples = 1024
+
+    os.makedirs(images_path, exist_ok=True)
+
+    plot_model_sizes(data_path, images_path, num_samples)
+    plot_warmups(data_path, images_path, num_samples)
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", type=int, default=1024)
+    args = parser.parse_args()
+
+    main(Path(args.data_path), Path(args.images_path), args.num_samples)

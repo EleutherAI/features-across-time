@@ -2,7 +2,6 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-import scipy
 import torch
 from datasets import load_from_disk
 from transformers import AutoTokenizer
@@ -23,32 +22,15 @@ class NgramModel:
         with open(path, "rb") as f:
             bigram_counts = pickle.load(f).toarray().astype(np.float32)
 
+        self.bigram_probs = bigram_counts / (
+            bigram_counts.sum(axis=1)[:, None] + np.finfo(np.float32).eps
+        )
+        self.bigram_probs = (
+            torch.tensor(self.bigram_probs).to_sparse().to_sparse_csr().to(self.device)
+        )
+
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
-
-        # Convert to sparse CSR tensor in a dumb way
-        sparse_bigram_probs = torch.tensor(
-            bigram_counts / (bigram_counts.sum(axis=1) + np.finfo(np.float32).eps)
-        ).to_sparse()
-
-        del bigram_counts
-
-        indices = sparse_bigram_probs.indices().numpy()
-        values = sparse_bigram_probs.values().numpy()
-        shape = sparse_bigram_probs.shape
-        sparse_csr_bigram_probs = scipy.sparse.coo_matrix(
-            (values, (indices[0], indices[1])), shape=shape
-        ).tocsr()
-
-        del sparse_bigram_probs, indices, values, shape
-
-        self.bigram_probs = torch.sparse_csr_tensor(
-            sparse_csr_bigram_probs.indptr.astype(np.int64),
-            sparse_csr_bigram_probs.indices.astype(np.int64),
-            sparse_csr_bigram_probs.data.astype(np.float32),
-            dtype=torch.float32,
-            device=self.device,
-        )
 
         # forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-40B.idx"
         # forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-40B.bin"
@@ -95,9 +77,6 @@ class NgramModel:
         return bigram_dists
 
     def get_ngram_prob(self, tokens: torch.Tensor, n: int) -> torch.Tensor:
-        if n >= 3:
-            raise NotImplementedError
-
         if n == 1:
             return (
                 self.unigram_probs.expand((*tokens.shape, -1))
@@ -112,15 +91,15 @@ class NgramModel:
                     + torch.finfo(torch.float32).eps
                 )
 
-        # ngram_prefixes = []
-        # for row in tokens:
-        #     ngram_prefixes.extend(
-        #         [row[i : i + (n - 1)].tolist() for i in range(len(row) - (n - 2))]
-        #     )
+        ngram_prefixes = []
+        for row in tokens:
+            ngram_prefixes.extend(
+                [row[i : i + (n - 1)].tolist() for i in range(len(row) - (n - 2))]
+            )
 
-        # counts = torch.tensor(
-        #     self.mmap_index.batch_next_token_counts(ngram_prefixes, self.d_vocab)
-        # )[:, : self.d_vocab]
-        # return counts / (
-        #     counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps
-        # )
+        counts = torch.tensor(
+            self.mmap_index.batch_next_token_counts(ngram_prefixes, self.d_vocab)
+        )[:, : self.d_vocab]
+        return counts / (
+            counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps
+        )

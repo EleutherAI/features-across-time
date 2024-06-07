@@ -10,6 +10,7 @@ from plot_ngram import (
     get_confidence_intervals,
     hex_to_rgba,
     kaleido_workaround,
+    marker_series,
 )
 from plotly.subplots import make_subplots
 

@@ -12,6 +12,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from datasets import load_from_disk
+from tokengrams import MemmapIndex
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
@@ -24,7 +25,7 @@ from scripts.script_utils.divergences import (
 
 
 class NgramModel:
-    def __init__(self, path: str, seq_len: int, d_vocab: int, device):
+    def __init__(self, path: Path, seq_len: int, d_vocab: int, device):
         self.d_vocab = d_vocab
         self.seq_len = seq_len
         self.device = device
@@ -42,6 +43,12 @@ class NgramModel:
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
 
+        forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-40B.idx"
+        forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-40B.bin"
+        self.tokengrams = MemmapIndex(
+            forty_billion_tokens_path, forty_billion_tokens_index_path
+        )
+
     def get_bigram_prob(self, prev: Tensor) -> Tensor:
         starts = self.bigram_probs.crow_indices()[prev]
         ends = self.bigram_probs.crow_indices()[prev + 1]
@@ -57,21 +64,24 @@ class NgramModel:
         return bigram_dists
 
     def get_ngram_prob(self, tokens: Tensor, n: int) -> Tensor:
+        eps = torch.finfo(torch.float32).eps
+
         if n == 1:
-            return (
-                self.unigram_probs.expand((*tokens.shape, -1))
-                + torch.finfo(torch.float32).eps
-            )
+            return self.unigram_probs.expand((*tokens.shape, -1)) + eps
         if n == 2:
             if len(tokens.shape) == 1:
-                return self.get_bigram_prob(tokens) + torch.finfo(torch.float32).eps
-            else:
-                return (
-                    torch.stack([self.get_bigram_prob(row) for row in tokens])
-                    + torch.finfo(torch.float32).eps
-                )
-        if n >= 3:
-            raise NotImplementedError
+                return self.get_bigram_prob(tokens) + eps
+            return torch.stack([self.get_bigram_prob(row) for row in tokens]) + eps
+
+        ngram_prefixes = []
+        for row in tokens:
+            ngram_prefixes.extend(
+                [row[i : i + (n - 1)].tolist() for i in range(len(row) - (n - 2))]
+            )
+        counts = torch.tensor(
+            self.mmap_index.batch_next_token_counts(ngram_prefixes, self.d_vocab),
+        )[:, : self.d_vocab]
+        return counts / (counts.sum(dim=1, keepdim=True) + eps)
 
 
 @torch.inference_mode()
@@ -98,7 +108,7 @@ def worker(
         ngram_data[n] = DataLoader(ds, batch_size=batch_size)
 
     ngram_model = NgramModel(
-        str(ngram_path / "bigrams.pkl"),
+        ngram_path / "bigrams.pkl",
         seq_len,
         d_vocab,
         "cuda",
@@ -169,10 +179,17 @@ def worker(
     return {key: value for (key, value) in data.items()}
 
 
-def main(ngram_path: Path, pile_path: Path, output_path: Path):
+def main(
+    ngram_path: Path,
+    pile_path: Path,
+    output_path: Path,
+    ngram_orders: list[int],
+    steps: list[int],
+):
     mp.set_start_method("spawn")
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     num_samples = 1024
+    seq_len = 2049
 
     for model_name, batch_size in (
         [
@@ -197,39 +214,19 @@ def main(ngram_path: Path, pile_path: Path, output_path: Path):
         data = run_workers(
             worker,
             # roughly log spaced steps + final step
-            [
-                1,
-                2,
-                4,
-                8,
-                16,
-                32,
-                64,
-                128,
-                256,
-                512,
-                1000,
-                2000,
-                5000,
-                8000,
-                16_000,
-                33_000,
-                66_000,
-                131_000,
-                143_000,
-            ],
+            steps,
             model_name=model_name,
             batch_size=batch_size,
             num_samples=num_samples,
             d_vocab=len(tokenizer.vocab),
-            seq_len=2049,
-            ngram_orders=[1, 2],
+            seq_len=seq_len,
+            ngram_orders=ngram_orders,
             ngram_path=ngram_path,
             pile_path=pile_path,
         )
         df = pd.concat([pd.DataFrame(d) for d in data])
         df.to_csv(
-            output_path / f"ngram_{model_name}_{num_samples}.csv",
+            output_path / f"ngram_{model_name}_{num_samples}_{ngram_orders}.csv",
             index=False,
         )
 
@@ -273,5 +270,43 @@ if __name__ == "__main__":
         default="output",
         help="Path to save output CSVs",
     )
+    parser.add_argument(
+        "--orders",
+        default=[1, 2],
+        nargs="+",
+        help="Which n-gram orders to collect data for",
+    )
+    parser.add_argument(
+        "--steps",
+        default=[
+            1,
+            2,
+            4,
+            8,
+            16,
+            32,
+            64,
+            128,
+            256,
+            512,
+            1000,
+            2000,
+            5000,
+            8000,
+            16_000,
+            33_000,
+            66_000,
+            131_000,
+            143_000,
+        ],
+        nargs="+",
+        help="Which model checkpoints to collect data for",
+    )
     args = parser.parse_args()
-    main(Path(args.ngram_path), Path(args.pile_path), Path(args.output_path))
+    main(
+        Path(args.ngram_path),
+        Path(args.pile_path),
+        Path(args.output_path),
+        args.orders,
+        args.steps,
+    )

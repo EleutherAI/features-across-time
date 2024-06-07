@@ -247,7 +247,6 @@ if __name__ == "__main__":
         type=str,
         help="Path to write data",
     )
-    # "/mnt/ssd-1/pile_preshuffled/standard/document.bin"
     parser.add_argument(
         "--tokens_path",
         # "data/es/es_tokenized.bin",
@@ -264,7 +263,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    bpb_ratio = 0.4157027
+    # es 1 billion tokens
+    # bpb_coefficient = 0.4157027
+    # entropies_bpb = [2.72, 1.50]
+
+    # pile
+    bpb_coefficient = 0.3650388
+    # entropies_bpb = [2.89, 2.04]
 
     main(
         args.n,
@@ -273,5 +278,5 @@ if __name__ == "__main__":
         Path(args.tokens_path),
         Path(args.bigrams_path),
         Path(args.data_path),
-        bpb_ratio,
+        bpb_coefficient,
     )

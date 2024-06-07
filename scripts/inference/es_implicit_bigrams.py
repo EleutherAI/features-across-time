@@ -1,9 +1,7 @@
 import argparse
 import math
-import os
 import pickle
 import random
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -15,13 +13,14 @@ import tqdm.auto as tqdm
 from datasets import load_from_disk
 from scipy import stats
 from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
 
 from scripts.script_utils.divergences import kl_divergence_log_space
 from scripts.script_utils.experiment import (
     Experiment,
     run_checkpoint_experiment_workers,
 )
-from scripts.script_utils.load_model import get_auto_tokenizer, get_es_finetune
+from scripts.script_utils.load_model import get_es_finetune
 from scripts.script_utils.ngram_model import NgramModel
 
 
@@ -163,7 +162,6 @@ def main(ngram_path: str, data_path: str, seed: int = 1):
             team="EleutherAI",
             model_name=model_name,
             get_model=get_es_finetune,
-            get_tokenizer=get_auto_tokenizer,
             d_vocab=50_277,
             steps=[
                 1,
@@ -184,7 +182,9 @@ def main(ngram_path: str, data_path: str, seed: int = 1):
                 32768,
             ],
             ngram_orders=[1, 2],
-            eod_index=get_auto_tokenizer("EleutherAI", model_name).eos_token_id,
+            eod_index=AutoTokenizer.from_pretrained(
+                f"EleutherAI/{model_name}"
+            ).eos_token_id,
         )
         for model_name, batch_size in [
             # ("pythia-14m", 2),
@@ -201,10 +201,7 @@ def main(ngram_path: str, data_path: str, seed: int = 1):
 
     for experiment in experiments:
         df = run_checkpoint_experiment_workers(
-            experiment,
-            finetuned_stats_worker,
-            ngram_path,
-            data_path
+            experiment, finetuned_stats_worker, ngram_path, data_path
         )
 
         df.to_csv(

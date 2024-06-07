@@ -2,36 +2,7 @@ import os
 from pathlib import Path
 
 import torch
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    GPTNeoXForCausalLM,
-    LlamaTokenizer,
-)
-
-
-def get_auto_tokenizer(team: str, model_name: str):
-    return AutoTokenizer.from_pretrained(f"{team}/{model_name}")
-
-
-def get_amber_tokenizer(team: str, model_name: str):
-    return LlamaTokenizer.from_pretrained(f"{team}/{model_name}")
-
-
-def get_auto_model(
-    team: str,
-    model_name: str,
-    step: int | None,
-    torch_dtype="auto",
-    device: str = "cuda",
-):
-    kwargs = {"torch_dtype": torch_dtype}
-    if step:
-        kwargs["revision"] = f"step{step}"
-
-    return AutoModelForCausalLM.from_pretrained(f"{team}/{model_name}", **kwargs).to(
-        device
-    )
+from transformers import GPTNeoXForCausalLM
 
 
 def get_es_finetune(

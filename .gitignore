@@ -8,6 +8,7 @@ img-ckpts/
 ckpts/
 24-05-*/
 data/
+third-order/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

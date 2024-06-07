@@ -60,13 +60,39 @@ marker_series = [
 ]
 
 
-def plot_bpb_and_divergences(
-    df: pd.DataFrame,
+def main(
+    data_path: Path,
     images_path: Path,
-    bpb_coefficient: int,
-    model_series: str,
-    ngram_entropies_bpb: list[int],
+    bpb_coefficient: float,
+    ngram_entropies_bpb: list[float],
+    num_samples: int,
 ):
+    os.makedirs(images_path, exist_ok=True)
+
+    model_series = "Pythia"
+    model_metadata = [
+        ("pythia-14m", "14M"),
+        ("pythia-70m", "70M"),
+        ("pythia-160m", "160M"),
+        ("pythia-410m", "410M"),
+        ("pythia-1b", "1B"),
+        ("pythia-1.4b", "1.4B"),
+        ("pythia-2.8b", "2.8B"),
+        ("pythia-6.9b", "6.9B"),
+        ("pythia-12b", "12B"),
+    ]
+    # model_metadata = [
+    #     (f'es_{model_name}', pretty_name)
+    #     for model_name, pretty_name in model_metadata
+    # ]
+    dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
+        model_df["model_name"] = model_name
+        model_df["pretty_model_name"] = pretty_model_name
+        dfs.append(model_df)
+    df = pd.concat(dfs)
+
     kaleido_workaround()
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     fig = make_subplots(
@@ -83,11 +109,6 @@ def plot_bpb_and_divergences(
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
-    # df column name, y range, row, col
-    div_metadata = [
-        ("1_gram_kl_div", [0, 4.5], 2, 2),
-        ("2_gram_kl_div", [0, 4.5], 2, 1),
-    ]
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):  # "3_gram"
         df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
@@ -101,9 +122,7 @@ def plot_bpb_and_divergences(
         df[f"{ngram}_bpb_bottom_conf"] = (
             df[f"{ngram}_loss_bottom_conf"] * bpb_coefficient
         )
-        df[f"{ngram}_bpb_top_conf"] = (
-            df[f"{ngram}_loss_top_conf"] * bpb_coefficient
-        )
+        df[f"{ngram}_bpb_top_conf"] = df[f"{ngram}_loss_top_conf"] * bpb_coefficient
 
         for i, model in enumerate(df["pretty_model_name"].unique()):
             df_model = df[df["pretty_model_name"] == model]
@@ -163,7 +182,12 @@ def plot_bpb_and_divergences(
                 col=idx + 1,
             )
 
-    for label, y_range, row, col in div_metadata:
+    # df column name, y range, row, col
+    div_metadata = [
+        ("1_gram_kl_div", 2, 1),
+        ("2_gram_kl_div", 2, 2),
+    ]
+    for label, row, col in div_metadata:
         df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
             lambda x: get_confidence_intervals(x, 1024)[0]
         )
@@ -224,7 +248,7 @@ def plot_bpb_and_divergences(
         width=1000,
         height=800,
         legend=dict(
-            title="Pythia loss",
+            title="Pythia",
             x=0.98,
             y=0.98,
             xanchor="right",
@@ -264,11 +288,15 @@ def plot_bpb_and_divergences(
         )
     )
 
-    fig.write_image(images_path / "combined-ngram-data-bpb.pdf", format="pdf")
+    fig.write_image(images_path / "ngram-combined.pdf", format="pdf")
 
 
-def main(data_path: Path, images_path: Path, num_samples=1024):
-    os.makedirs(images_path, exist_ok=True)
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", type=int, default=1024)
+    args = parser.parse_args()
 
     # es 1 billion tokens
     # bpb_coefficient = 0.4157027
@@ -278,39 +306,10 @@ def main(data_path: Path, images_path: Path, num_samples=1024):
     bpb_coefficient = 0.3650388
     entropies_bpb = [2.89, 2.04]
 
-    model_series = "Pythia"
-    model_metadata = [
-        ("pythia-14m", "14M"),
-        ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        ("pythia-1.4b", "1.4B"),
-        ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
-    ]
-    # model_metadata = [
-    #     (f'es_{model_name}', pretty_name) 
-    #     for model_name, pretty_name in model_metadata
-    # ]
-    dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
-        model_df["model_name"] = model_name
-        model_df["pretty_model_name"] = pretty_model_name
-        dfs.append(model_df)
-    df = pd.concat(dfs)
-
-    plot_bpb_and_divergences(
-        df, images_path, bpb_coefficient, model_series, entropies_bpb
+    main(
+        Path(args.data_path),
+        Path(args.images_path),
+        bpb_coefficient,
+        entropies_bpb,
+        args.num_samples,
     )
-
-
-if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="output")
-    parser.add_argument("--images_path", type=str, default="images")
-    args = parser.parse_args()
-
-    main(Path(args.data_path), Path(args.images_path))

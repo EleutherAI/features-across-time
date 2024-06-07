@@ -1,4 +1,5 @@
 import os
+from argparse import ArgumentParser
 from pathlib import Path
 
 import numpy as np
@@ -12,35 +13,22 @@ from scripts.plots.plot_ngram import (
     get_confidence_intervals,
     hex_to_rgba,
     kaleido_workaround,
+    marker_series,
 )
-
-marker_series = [
-    "circle",
-    "square",
-    "diamond",
-    "cross",
-    "x",
-    "triangle-up",
-    "triangle-down",
-    "triangle-left",
-    "triangle-right",
-    "pentagon",
-    "hexagon",
-    "octagon",
-    "star",
-    "hexagram",
-]
 
 
 def main(
-    model_name: str, num_samples: int, bpb_coefficient=0.3650388, entropies=[2.89, 2.04]
+    model_name: str,
+    images_path: Path,
+    data_path: Path,
+    num_samples: int,
+    bpb_coefficient=0.3650388,
+    entropies=[2.89, 2.04],
 ):
+    os.makedirs(images_path, exist_ok=True)
     kaleido_workaround()
 
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
-    image_name = Path.cwd() / "images" / f"in-context-EleutherAI--{model_name}.pdf"
-
-    df = pd.read_csv(Path.cwd() / "output" / f"{model_name}_{num_samples}_steps.csv")
+    df = pd.read_csv(data_path / f"{model_name}_{num_samples}_steps.csv")
     tick_values, tick_texts = base_2_log_ticks(df["index"])
 
     df["step"] = pd.to_numeric(df["step"], errors="coerce").fillna(0).astype(int)
@@ -190,10 +178,18 @@ def main(
             font=dict(size=14),
         )
     )
-    fig.write_image(image_name, format="pdf")
+    fig.write_image(
+        images_path / f"in-context-EleutherAI--{model_name}.pdf", format="pdf"
+    )
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", type=int, default=1024)
+    args = parser.parse_args()
+
     for model_name, batch_size in [
         # ("pythia-14m", 4),
         # ("pythia-70m", 4),
@@ -205,4 +201,4 @@ if __name__ == "__main__":
         # ("pythia-6.9b", 1),
         ("pythia-12b", 1),
     ]:
-        main(model_name, num_samples=1024)
+        main(model_name, Path(args.images_path), Path(args.data_path), args.num_samples)

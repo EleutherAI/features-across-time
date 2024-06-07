@@ -10,25 +10,9 @@ from plot_ngram import (
     get_confidence_intervals,
     hex_to_rgba,
     kaleido_workaround,
+    marker_series,
 )
 from plotly.subplots import make_subplots
-
-marker_series = [
-    "circle",
-    "square",
-    "diamond",
-    "cross",
-    "x",
-    "triangle-up",
-    "triangle-down",
-    "triangle-left",
-    "triangle-right",
-    "pentagon",
-    "hexagon",
-    "octagon",
-    "star",
-    "hexagram",
-]
 
 
 def plot_loss_and_divergence(

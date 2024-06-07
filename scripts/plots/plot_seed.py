@@ -5,11 +5,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import (
-    base_2_log_ticks,
-    hex_to_rgba,
-    kaleido_workaround,
-)
+from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround, marker_series
 from plotly.subplots import make_subplots
 
 
@@ -17,22 +13,6 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient: float, entropies: list[flo
     kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
-    marker_series = [
-        "circle",
-        "square",
-        "diamond",
-        "cross",
-        "x",
-        "triangle-up",
-        "triangle-down",
-        "triangle-left",
-        "triangle-right",
-        "pentagon",
-        "hexagon",
-        "octagon",
-        "star",
-        "hexagram",
-    ]
 
     def create_row(
         df,

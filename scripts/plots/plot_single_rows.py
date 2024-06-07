@@ -166,10 +166,10 @@ def plot_loss_and_divergences(
     )
 
     div_metadata = [
-        ("1_gram_kl_div", [0, 7], 1, 1),
-        ("2_gram_kl_div", [0, 7], 1, 2),
+        ("1_gram_kl_div", 1, 1),
+        ("2_gram_kl_div", 1, 2),
     ]
-    for label, y_range, row, col in div_metadata:
+    for label, row, col in div_metadata:
         df[f"bottom_conf_{label}"] = df[f"mean_{label}"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -225,7 +225,7 @@ def plot_loss_and_divergences(
                     name=model,
                     line=dict(color=color),
                     showlegend=False,
-                ),  # col==2
+                ),
                 row=row,
                 col=col,
             )
@@ -270,7 +270,13 @@ def plot_loss_and_divergences(
     fig.write_image(divergence_image_name, format="pdf")
 
 
-def plot_model_sizes(data_path: Path, images_path: Path, num_samples: int):
+def plot_suite(
+    data_path: Path,
+    images_path: Path,
+    num_samples: int,
+    bpb_coefficient: float,
+    entropies: list[float],
+):
     model_metadata = [
         ("pythia-14m", "14M"),
         ("pythia-70m", "70M"),
@@ -292,53 +298,47 @@ def plot_model_sizes(data_path: Path, images_path: Path, num_samples: int):
 
     loss_image_name = images_path / "ngram-loss.pdf"
     divergence_image_name = images_path / "ngram-divergence.pdf"
-    plot_loss_and_divergences(df, loss_image_name, divergence_image_name)
+    plot_loss_and_divergences(
+        df, loss_image_name, divergence_image_name, bpb_coefficient, entropies
+    )
 
 
-def plot_warmups(data_path: Path, images_path: Path, num_samples: int):
-    model_metadata = [
-        ("pythia-14m", "14M (fast warmup)"),
-        ("pythia-14m-warmup01", "14M (slow warmup)"),
-    ]
-    model_dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
-        model_df["model_name"] = model_name
-        model_df["pretty_model_name"] = pretty_model_name
+def plot_warmups(
+    data_path: Path,
+    images_path: Path,
+    num_samples: int,
+    bpb_coefficient: float,
+    entropies: list[float],
+):
+    for model_size in [14, 70]:
+        model_metadata = [
+            (f"pythia-{model_size}m", f"{model_size}M (fast warmup)"),
+            (f"pythia-{model_size}m-warmup01", f"{model_size}M (slow warmup)"),
+        ]
+        model_dfs = []
+        for model_name, pretty_model_name in model_metadata:
+            model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
+            model_df["model_name"] = model_name
+            model_df["pretty_model_name"] = pretty_model_name
 
-        model_dfs.append(model_df)
-    df = pd.concat(model_dfs)
+            model_dfs.append(model_df)
+        df = pd.concat(model_dfs)
 
-    divergence_name = images_path / "warmups-14m-divergence.pdf"
-    loss_name = images_path / "warmups-14m-loss.pdf"
-    plot_loss_and_divergences(df, loss_name, divergence_name, qualitative=True)
-
-    model_metadata = [
-        ("pythia-70m", "70M (fast warmup)"),
-        ("pythia-70m-warmup01", "70M (slow warmup)"),
-    ]
-    model_dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
-        model_df["step"] = model_df["step"] + 1
-        model_df["model_name"] = model_name
-        model_df["pretty_model_name"] = pretty_model_name
-
-        model_dfs.append(model_df)
-    df = pd.concat(model_dfs)
-
-    loss_name = images_path / "warmups-70m-loss.pdf"
-    divergence_name = images_path / "warmups-70m-divergence.pdf"
-    plot_loss_and_divergences(df, loss_name, divergence_name, qualitative=True)
+        loss_name = images_path / f"warmups-{model_size}m-loss.pdf"
+        divergence_name = images_path / f"warmups-{model_size}m-divergence.pdf"
+        plot_loss_and_divergences(
+            df, loss_name, divergence_name, bpb_coefficient, entropies, qualitative=True
+        )
 
 
 def main(data_path: Path, images_path: Path, num_samples: int):
-    num_samples = 1024
+    bpb_coefficient = 0.3650388
+    entropies = [2.89, 2.04]
 
     os.makedirs(images_path, exist_ok=True)
 
-    plot_model_sizes(data_path, images_path, num_samples)
-    plot_warmups(data_path, images_path, num_samples)
+    plot_suite(data_path, images_path, num_samples, bpb_coefficient, entropies)
+    plot_warmups(data_path, images_path, num_samples, bpb_coefficient, entropies)
 
 
 if __name__ == "__main__":

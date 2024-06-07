@@ -74,7 +74,7 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
         "real": "Val. set",
     }
 
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     uniform_random_loss = math.log(num_classes(dataset_str))
     uniform_random_accuracy = 1 / num_classes(dataset_str)
 
@@ -333,8 +333,8 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, default=Path.cwd() / "24-05-24")
-    parser.add_argument("--images_path", type=str, default=Path.cwd() / "images")
+    parser.add_argument("--data_path", type=str, default="24-05-24")
+    parser.add_argument("--images_path", type=str, default="images")
     args = parser.parse_args()
 
-    main(args.data_path, args.images_path)
+    main(Path(args.data_path), Path(args.images_path))

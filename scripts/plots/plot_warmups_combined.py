@@ -1,3 +1,5 @@
+import os
+from argparse import ArgumentParser
 from pathlib import Path
 
 import pandas as pd
@@ -31,31 +33,13 @@ marker_series = [
 
 def plot_loss_and_divergence(
     df: pd.DataFrame,
-    image_name: str,
+    images_path: Path,
+    model_size: int,
     bpb_coefficient=0.3650388,
     entropies=[2.89, 2.04],
     num_samples=1024,
 ):
     kaleido_workaround()
-
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
-    div_metadata = [
-        (
-            "1-gram_logit_kl_div",
-            "D<sub>KL</sub>(unigram model || Pythia) across time",
-            [0, 1],
-            2,
-            2,
-        ),
-        (
-            "2-gram_logit_kl_div",
-            "D<sub>KL</sub>(bigram model || Pythia) across time",
-            [0, 7],
-            2,
-            1,
-        ),
-    ]
-
     fig = make_subplots(
         rows=2,
         cols=2,
@@ -64,12 +48,15 @@ def plot_loss_and_divergence(
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
-        ]
-        + [label[1] for label in div_metadata],
+            "D<sub>KL</sub>(unigram model || Pythia) across time",
+            "D<sub>KL</sub>(bigram model || Pythia) across time",
+        ],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
+    div_metadata = [("1_gram_kl_div", 2, 1), ("2_gram_kl_div", 2, 2)]
 
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     for idx, ngram in enumerate(["1_gram", "2_gram"]):
         df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
@@ -141,11 +128,18 @@ def plot_loss_and_divergence(
             col=idx + 1,
         )
 
-    for label, pretty_label, y_range, row, col in div_metadata:
+    for label, row, col in div_metadata:
         for i, model in enumerate(df["pretty_model_name"].unique()):
-            df_model = df[df["pretty_model_name"] == model]
             color = px.colors.qualitative.Plotly[i]
             transparent_color = hex_to_rgba(color, opacity=0.17)
+
+            df_model = df[df["pretty_model_name"] == model]
+            df_model[f"bottom_conf_{label}"] = df_model[f"mean_{label}"].map(
+                lambda x: get_confidence_intervals(x, num_samples)[0]
+            )
+            df_model[f"top_conf_{label}"] = df_model[f"mean_{label}"].map(
+                lambda x: get_confidence_intervals(x, num_samples)[1]
+            )
             df_model[f"top_conf_{label}_bpb"] = (
                 df_model[f"top_conf_{label}"] * bpb_coefficient
             )
@@ -190,7 +184,7 @@ def plot_loss_and_divergence(
                     name=model,
                     line=dict(color=color),
                     showlegend=False,
-                ),  # row==1 and col==2
+                ),
                 row=row,
                 col=col,
             )
@@ -237,35 +231,33 @@ def plot_loss_and_divergence(
         )
     )
 
-    fig.write_image(image_name, format="pdf")
+    fig.write_image(images_path / f"warmups-{model_size}m.pdf", format="pdf")
 
 
-def plot_warmups():
+def main(data_path: Path, images_path: Path):
+    os.makedirs(images_path, exist_ok=True)
+
     num_samples = 1024
-    for model_size in [14]:  # 70
+    for model_size in [14, 70]:
         model_metadata = [
             (f"pythia-{model_size}m", f"{model_size}M (fast warmup)"),
             (f"pythia-{model_size}m-warmup01", f"{model_size}M (slow warmup)"),
         ]
         model_dfs = []
         for model_name, pretty_model_name in model_metadata:
-            model_df = pd.read_csv(
-                Path.cwd()
-                / "output"
-                / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-            )
+            model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
             model_df["model_name"] = model_name
             model_df["pretty_model_name"] = pretty_model_name
             model_dfs.append(model_df)
+
         df = pd.concat(model_dfs)
-
-        image_name = Path.cwd() / "images" / f"warmups-{model_size}m.pdf"
-        plot_loss_and_divergence(df, image_name)
-
-
-def main():
-    plot_warmups()
+        plot_loss_and_divergence(df, images_path, model_size)
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    args = parser.parse_args()
+
+    main(Path(args.data_path), Path(args.images_path))

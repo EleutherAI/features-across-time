@@ -1,4 +1,5 @@
 import os
+from argparse import ArgumentParser
 from pathlib import Path
 
 import pandas as pd
@@ -12,15 +13,10 @@ from plot_ngram import (
 from plotly.subplots import make_subplots
 
 
-def plot_seed_loss(
-    df: pd.DataFrame,
-    bpb_coefficient=0.3650388,
-    entropies=[2.89, 2.04],
-    num_samples=1024,
-):
+def plot_seed_loss(df: pd.DataFrame, bpb_coefficient: float, entropies: list[float]):
     kaleido_workaround()
 
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     marker_series = [
         "circle",
         "square",
@@ -174,11 +170,11 @@ def plot_seed_loss(
 
     div_metadata = [
         (
-            "1-gram_logit_kl_div",
+            "1_gram_kl_div",
             "D<sub>KL</sub>(unigram model || Pythia) across time",
         ),
         (
-            "2-gram_logit_kl_div",
+            "2_gram_kl_div",
             "D<sub>KL</sub>(bigram model || Pythia) across time",
         ),
     ]
@@ -189,16 +185,15 @@ def plot_seed_loss(
             pretty_label,
             f"mean_{label}_bpb",
             ytitle="KL divergence",
-            show_xaxis=label == "2-gram_logit_kl_div",
+            show_xaxis=label == "2_gram_kl_div",
         )
 
         image_name = Path.cwd() / "images" / f"seed_{label}.pdf"
         fig.write_image(image_name, format="pdf")
 
 
-def main():
-    num_samples = 1024
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
+def main(data_path: Path, images_path: Path, num_samples=1024):
+    os.makedirs(images_path, exist_ok=True)
 
     model_metadata = [
         ("pythia-14m", "14M", 9),
@@ -211,17 +206,22 @@ def main():
     for model_name, pretty_model_name, num_seeds in model_metadata:
         for i in range(1, num_seeds + 1):
             seed_df = pd.read_csv(
-                Path.cwd()
-                / "output"
-                / f"means_ngrams_model_{model_name}-seed{i}_{num_samples}.csv"
+                data_path / f"ngram_{model_name}-seed{i}_{num_samples}.csv"
             )
             seed_df["seed"] = i
             seed_df["model_name"] = model_name
             seed_df["pretty_model_name"] = pretty_model_name
             seed_dfs.append(seed_df)
-    df = pd.concat(seed_dfs)
-    plot_seed_loss(df)
+
+    plot_seed_loss(
+        pd.concat(seed_dfs), bpb_coefficient=0.3650388, entropies=[2.89, 2.04]
+    )
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    args = parser.parse_args()
+
+    main(Path(args.data_path), Path(args.images_path))

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import time
+from argparse import ArgumentParser
 from pathlib import Path
 
 import numpy as np
@@ -12,22 +13,24 @@ from scipy import stats
 
 
 def kaleido_workaround():
-    # Garbage data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_file:
+    # Write data to work around Kaleido bug: https://github.com/plotly/plotly.py/issues/3469
+    with tempfile.NamedTemporaryFile() as temp_file:
         fig = px.scatter(x=[0], y=[0])
         fig.write_image(temp_file.name, format="pdf")
     time.sleep(2)
 
 
-def base_2_log_ticks(values, step=1):
+def base_2_log_ticks(values, spacing=1):
     max_val = np.ceil(np.log2(values.max()))
-    ticks = 2 ** np.arange(0, max_val + 1, step)
-    labels = [f"2<sup>{int(i)}</sup>" for i in np.arange(0, max_val + 1, step)]
+    ticks = 2 ** np.arange(0, max_val + 1, spacing)
+    labels = [f"2<sup>{int(i)}</sup>" for i in np.arange(0, max_val + 1, spacing)]
     return ticks, labels
 
 
-def hex_to_rgba(hex_color, opacity=0.5):
-    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+def hex_to_rgba(hex_color: str, opacity=0.5):
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
     return f"rgba({r}, {g}, {b}, {opacity})"
 
 
@@ -38,50 +41,34 @@ def get_confidence_intervals(
     return stats.norm.interval(confidence, loc=mean, scale=sem)
 
 
+# Ideally all trend lines will use a different marker for accessibility
+marker_series = [
+    "circle",
+    "square",
+    "diamond",
+    "cross",
+    "x",
+    "triangle-up",
+    "triangle-down",
+    "triangle-left",
+    "triangle-right",
+    "pentagon",
+    "hexagon",
+    "octagon",
+    "star",
+    "hexagram",
+]
+
+
 def plot_bpb_and_divergences(
     df: pd.DataFrame,
-    image_name: str,
+    images_path: Path,
     bpb_coefficient: int,
     model_series: str,
     ngram_entropies_bpb: list[int],
-    qualitative=False,
 ):
     kaleido_workaround()
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
-
-    div_metadata = [
-        (
-            "1-gram_logit_kl_div",
-            f"D<sub>KL</sub>(unigram model || {model_series}) across time",
-            [0, 7],
-            2,
-            2,
-        ),
-        (
-            "2-gram_logit_kl_div",
-            f"D<sub>KL</sub>(bigram model || {model_series}) across time",
-            [0, 7],
-            2,
-            1,
-        ),
-    ]
-    marker_series = [
-        "circle",
-        "square",
-        "diamond",
-        "cross",
-        "x",
-        "triangle-up",
-        "triangle-down",
-        "triangle-left",
-        "triangle-right",
-        "pentagon",
-        "hexagon",
-        "octagon",
-        "star",
-        "hexagram",
-    ]
-
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     fig = make_subplots(
         rows=2,
         cols=2,
@@ -90,26 +77,32 @@ def plot_bpb_and_divergences(
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
-        ]
-        + [label[1] for label in div_metadata],
+            f"D<sub>KL</sub>(unigram model || {model_series}) across time",
+            f"D<sub>KL</sub>(bigram model || {model_series}) across time",
+        ],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
+    # df column name, y range, row, col
+    div_metadata = [
+        ("1_gram_kl_div", [0, 4.5], 2, 2),
+        ("2_gram_kl_div", [0, 4.5], 2, 1),
+    ]
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):  # "3_gram"
-        df[f"mean_{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
+        df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, 1024)[0]
         )
-        df[f"mean_{ngram}_loss_top_conf"] = df[f"mean_{ngram}_loss"].map(
+        df[f"{ngram}_loss_top_conf"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, 1024)[1]
         )
 
-        df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
-        df[f"mean_{ngram}_bpb_bottom_conf"] = (
-            df[f"mean_{ngram}_loss_bottom_conf"] * bpb_coefficient
+        df[f"{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
+        df[f"{ngram}_bpb_bottom_conf"] = (
+            df[f"{ngram}_loss_bottom_conf"] * bpb_coefficient
         )
-        df[f"mean_{ngram}_bpb_top_conf"] = (
-            df[f"mean_{ngram}_loss_top_conf"] * bpb_coefficient
+        df[f"{ngram}_bpb_top_conf"] = (
+            df[f"{ngram}_loss_top_conf"] * bpb_coefficient
         )
 
         for i, model in enumerate(df["pretty_model_name"].unique()):
@@ -120,7 +113,7 @@ def plot_bpb_and_divergences(
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"mean_{ngram}_bpb_top_conf"],
+                    y=df_model[f"{ngram}_bpb_top_conf"],
                     fill=None,
                     mode="lines",
                     line=dict(width=0),
@@ -133,7 +126,7 @@ def plot_bpb_and_divergences(
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"mean_{ngram}_bpb_bottom_conf"],
+                    y=df_model[f"{ngram}_bpb_bottom_conf"],
                     mode="lines",
                     line=dict(width=0),
                     fill="tonexty",
@@ -147,7 +140,7 @@ def plot_bpb_and_divergences(
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"mean_{ngram}_bpb"],
+                    y=df_model[f"{ngram}_bpb"],
                     mode="lines+markers",
                     marker=dict(size=5, symbol=marker_series[i]),
                     name=model,
@@ -170,7 +163,7 @@ def plot_bpb_and_divergences(
                 col=idx + 1,
             )
 
-    for label, pretty_label, y_range, row, col in div_metadata:
+    for label, y_range, row, col in div_metadata:
         df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
             lambda x: get_confidence_intervals(x, 1024)[0]
         )
@@ -271,14 +264,21 @@ def plot_bpb_and_divergences(
         )
     )
 
-    fig.write_image(image_name, format="pdf")
+    fig.write_image(images_path / "combined-ngram-data-bpb.pdf", format="pdf")
 
 
-def plot_model_sizes(bpb_coefficient: float, entropies_bpb: list[float]):
-    num_samples = 1024
+def main(data_path: Path, images_path: Path, num_samples=1024):
+    os.makedirs(images_path, exist_ok=True)
+
+    # es 1 billion tokens
+    # bpb_coefficient = 0.4157027
+    # entropies_bpb = [2.72, 1.50]
+
+    # pile
+    bpb_coefficient = 0.3650388
+    entropies_bpb = [2.89, 2.04]
+
     model_series = "Pythia"
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
-
     model_metadata = [
         ("pythia-14m", "14M"),
         ("pythia-70m", "70M"),
@@ -289,47 +289,28 @@ def plot_model_sizes(bpb_coefficient: float, entropies_bpb: list[float]):
         ("pythia-2.8b", "2.8B"),
         ("pythia-6.9b", "6.9B"),
         ("pythia-12b", "12B"),
-        # ("es_pythia-14m", "14M"),
-        # ("es_pythia-70m", "70M"),
-        # ("es_pythia-160m", "160M"),
-        # ("es_pythia-410m", "410M"),
-        # ("es_pythia-1b", "1B"),
-        # ("es_pythia-1.4b", "1.4B"),
     ]
-    model_dfs = []
+    # model_metadata = [
+    #     (f'es_{model_name}', pretty_name) 
+    #     for model_name, pretty_name in model_metadata
+    # ]
+    dfs = []
     for model_name, pretty_model_name in model_metadata:
-        dfs = []
-        model_df = pd.read_csv(
-            Path.cwd()
-            / "output"
-            / "24-06-05"
-            / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
-
-        dfs.append(model_df)
-
+        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
         model_df["model_name"] = model_name
         model_df["pretty_model_name"] = pretty_model_name
-
-        model_dfs.append(model_df)
-    df = pd.concat(model_dfs)
-
-    image_name = Path.cwd() / "images" / "combined-ngram-data-bpb.pdf"
+        dfs.append(model_df)
+    df = pd.concat(dfs)
 
     plot_bpb_and_divergences(
-        df, image_name, bpb_coefficient, model_series, entropies_bpb
+        df, images_path, bpb_coefficient, model_series, entropies_bpb
     )
 
 
-def main():
-    # es_bpb_coefficient = 0.4157027
-    # es_entropies_bpb = [2.72, 1.50]
-
-    pile_bpb_coefficient = 0.3650388
-    pile_entropies_bpb = [2.89, 2.04]
-
-    plot_model_sizes(pile_bpb_coefficient, pile_entropies_bpb)
-
-
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    args = parser.parse_args()
+
+    main(Path(args.data_path), Path(args.images_path))

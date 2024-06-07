@@ -72,6 +72,8 @@ def run_dataset(
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+    os.makedirs(data_path, exist_ok=True)
+
     path, _, name = dataset_str.partition(":")
     ds = load_dataset(path, name or None)
     assert isinstance(ds, DatasetDict)
@@ -129,7 +131,7 @@ def run_dataset(
 
     dataset_file_str = dataset_str.replace("/", "--")
     truncated_normal = load_from_disk(
-        data_path / f"truncated-normal-{dataset_file_str}.hf"
+        str(data_path / f"truncated-normal-{dataset_file_str}.hf")
     ).select(range(len(val)))
     
     ds_variations = {
@@ -139,18 +141,19 @@ def run_dataset(
         "real": val,
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
+        "third_order": load_from_disk(str(data_path / f"third-order-{dataset_file_str}.hf")),
         "gaussian": gaussian,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
 
-    for ds_name in ["maxent", "shifted", "real", "truncated_normal"]:
+    for ds_name in ["third_order", "maxent", "shifted", "real", "truncated_normal", ]:
         ds_variations[ds_name].set_format("torch", columns=["pixel_values", label_col])
 
     if dataset_str == "mnist" or dataset_str == "fashion_mnist":
         for ds_name in ["maxent", "shifted", "truncated_normal"]:
             ds_variations[ds_name] = ds_variations[ds_name].map(to_grayscale)
 
-    num_unique_labels = len(torch.unique(next(iter(ds_variations.values()))[label_col]))
+    num_unique_labels = len(class_probs)
     checkpoints = np.unique(
         2 ** np.arange(int(np.log2(1)), int(np.log2(65536)) + 1, dtype=int)
     ).tolist()
@@ -287,7 +290,7 @@ def run_model(
         for ds_name, ds in ds_variations.items():
             running_mean_loss = 0.0
             true_pred_count = 0.0
-            dataloader = DataLoader(ds, batch_size=512, drop_last=True)
+            dataloader = DataLoader(ds, batch_size=64, drop_last=True)
             for batch in dataloader:
                 labels = batch["label"].cuda()
                 output = model(batch["pixel_values"].cuda(), labels)

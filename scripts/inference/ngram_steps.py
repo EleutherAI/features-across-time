@@ -165,6 +165,7 @@ def worker(
         for key in running_means.keys():
             data[key].append(running_means[key])
 
+    # Convert defaultdict to dict for DataFrame
     return {key: value for (key, value) in data.items()}
 
 
@@ -175,23 +176,24 @@ def main(ngram_path: Path, pile_path: Path, output_path: Path):
 
     for model_name, batch_size in (
         [
-            # ("pythia-14m", 8),
+            ("pythia-14m", 8),
             ("pythia-70m", 4),
             ("pythia-160m", 4),
             ("pythia-410m", 4),
-            # ("pythia-1b", 4),
-            # ("pythia-1.4b", 4),
-            # ("pythia-2.8b", 4),
-            # ("pythia-6.9b", 1),
-            # ("pythia-12b", 1),
-            # ("pythia-14m-warmup01", 8),
-            # ("pythia-70m-warmup01", 4),
+            ("pythia-1b", 4),
+            ("pythia-1.4b", 4),
+            ("pythia-2.8b", 2),
+            ("pythia-6.9b", 1),
+            ("pythia-12b", 1),
+            ("pythia-14m-warmup01", 8),
+            ("pythia-70m-warmup01", 4),
         ]
-        # + [(f"pythia-14m-seed{i}", 8) for i in range(1, 10)]
-        # + [(f"pythia-70m-seed{i}", 2) for i in range(1, 10)]
-        # + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
-        # + [(f"pythia-410m-seed{i}", 2) for i in range(1, 5)]
+        + [(f"pythia-14m-seed{i}", 8) for i in range(3, 10)]
+        + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
+        + [(f"pythia-160m-seed{i}", 4) for i in range(8, 10)]
+        + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
     ):
+        print("Collecting data for", model_name)
         data = run_workers(
             worker,
             # roughly log spaced steps + final step

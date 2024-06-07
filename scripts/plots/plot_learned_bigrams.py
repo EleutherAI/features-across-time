@@ -72,7 +72,7 @@ def plot(df: pd.DataFrame, image_name: str, model_series: str, num_samples: int)
         yaxis_title="KL Divergence (BPB)",
         title="KL Divergence(Learned | Dataset Bigrams) over Training Steps",
     )
-    tick_values, tick_texts = base_2_log_ticks(df["step"], step=2)
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
     fig.update_yaxes(range=[0, 6])
 

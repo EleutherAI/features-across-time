@@ -10,7 +10,6 @@ from plot_ngram import (
     get_confidence_intervals,
     hex_to_rgba,
     kaleido_workaround,
-    marker_series,
 )
 from plotly.subplots import make_subplots
 
@@ -34,16 +33,10 @@ def plot_loss_and_divergences(
         subplot_titles=[
             "Unigram sequence loss across time",
             "Bigram sequence loss across time",
-            "D<sub>KL</sub>(unigram model || Pythia) across time",
-            "D<sub>KL</sub>(bigram model || Pythia) across time",
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.05,
     )
-    div_metadata = [
-        ("1-gram_logit_kl_div", [0, 7], 1, 2),
-        ("2-gram_logit_kl_div", [0, 7], 1, 1),
-    ]
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
 
     for idx, ngram in enumerate(["1_gram", "2_gram"]):
@@ -163,12 +156,19 @@ def plot_loss_and_divergences(
         cols=2,
         shared_xaxes=True,
         shared_yaxes=True,
-        subplot_titles=[label[1] for label in div_metadata],
+        subplot_titles=[
+            "D<sub>KL</sub>(unigram model || Pythia) across time",
+            "D<sub>KL</sub>(bigram model || Pythia) across time",
+        ],
         horizontal_spacing=0.02,
         vertical_spacing=0.05,
     )
 
-    for label, pretty_label, y_range, row, col in div_metadata:
+    div_metadata = [
+        ("1_gram_kl_div", [0, 7], 1, 1),
+        ("2_gram_kl_div", [0, 7], 1, 2),
+    ]
+    for label, y_range, row, col in div_metadata:
         df[f"bottom_conf_{label}"] = df[f"mean_{label}"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -283,14 +283,9 @@ def plot_model_sizes(data_path: Path, images_path: Path, num_samples: int):
     ]
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            data_path / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
-
-        model_df["step"] = model_df["step"] + 1
+        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
         model_df["model_name"] = model_name
         model_df["pretty_model_name"] = pretty_model_name
-
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
 
@@ -306,10 +301,7 @@ def plot_warmups(data_path: Path, images_path: Path, num_samples: int):
     ]
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            data_path / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
-        model_df["step"] = model_df["step"] + 1
+        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
         model_df["model_name"] = model_name
         model_df["pretty_model_name"] = pretty_model_name
 
@@ -326,9 +318,7 @@ def plot_warmups(data_path: Path, images_path: Path, num_samples: int):
     ]
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(
-            data_path / f"means_ngrams_model_{model_name}_{num_samples}.csv"
-        )
+        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
         model_df["step"] = model_df["step"] + 1
         model_df["model_name"] = model_name
         model_df["pretty_model_name"] = pretty_model_name

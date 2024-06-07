@@ -133,7 +133,7 @@ def run_dataset(
     truncated_normal = load_from_disk(
         str(data_path / f"truncated-normal-{dataset_file_str}.hf")
     ).select(range(len(val)))
-    
+
     ds_variations = {
         "maxent": load_from_disk(data_path / f"dury-{dataset_file_str}.hf"),
         "shifted": load_from_disk(data_path / f"shifted-{dataset_file_str}.hf"),
@@ -141,12 +141,20 @@ def run_dataset(
         "real": val,
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
-        "third_order": load_from_disk(str(data_path / f"third-order-{dataset_file_str}.hf")),
+        "third_order": load_from_disk(
+            str(data_path / f"third-order-{dataset_file_str}.hf")
+        ),
         "gaussian": gaussian,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
 
-    for ds_name in ["third_order", "maxent", "shifted", "real", "truncated_normal", ]:
+    for ds_name in [
+        "third_order",
+        "maxent",
+        "shifted",
+        "real",
+        "truncated_normal",
+    ]:
         ds_variations[ds_name].set_format("torch", columns=["pixel_values", label_col])
 
     if dataset_str == "mnist" or dataset_str == "fashion_mnist":

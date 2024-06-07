@@ -17,8 +17,13 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
 
+def conditional_entropy(arr: NDArray):
+    """Bigram model entropy"""
+    """H(Y|X) = H(X, Y) - H(X)"""
+    return entropy(arr.data) - entropy(arr.sum(1))
+
+
 def build_bigrams(tokens_path: Path, bigrams_path: Path):
-    # tokens = np.array([1, 2, 3], dtype=np.uint16)
     tokens = np.memmap(tokens_path, dtype=np.uint16, mode="r")
     bigrams = (
         np.lib.stride_tricks.sliding_window_view(tokens, 2).view(np.uint32).squeeze()
@@ -36,22 +41,14 @@ def build_bigrams(tokens_path: Path, bigrams_path: Path):
         pickle.dump(es_bigrams, f)
 
 
-def conditional_entropy(arr: NDArray, bpb_ratio: float):
-    """Bigram model entropy"""
-    """H(Y|X) = H(X, Y) - H(X)"""
-    H = entropy(arr.data) - entropy(arr.sum(1))
-    print("Entropy: ", H)
-    print("Entropy (bpb):", H * bpb_ratio)
-
-
 class NgramSeqModel:
     def __init__(
         self,
-        bigrams_path: str,
-        token_path: str | None,
-        token_index_path: str | None,
-        batch=1,
-        seq_len=2049,
+        bigrams_path: Path,
+        token_path: Path | None,
+        token_index_path: Path | None,
+        batch: int,
+        seq_len: int,
     ):
         self.tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
         self.batch = batch
@@ -60,14 +57,17 @@ class NgramSeqModel:
         with open(bigrams_path, "rb") as f:
             bigram_counts = pickle.load(f).toarray().astype(np.float32)
 
+        print("Loaded bigram counts...")
+
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).cuda()
         self.unigram_probs /= self.unigram_probs.sum()
 
         self.bigrams = bigram_counts + np.finfo(bigram_counts.dtype).eps
         self.bigram_probs = self.bigrams / self.bigrams.sum(axis=1)[:, None]
 
+        print("Loading mmap index...")
         if token_path and token_index_path:
-            self.mmap_index = MemmapIndex(token_path, token_index_path)
+            self.mmap_index = MemmapIndex(str(token_path), str(token_index_path))
 
     def generate_unigram_seq(self, num_samples: int) -> torch.Tensor:
         return torch.multinomial(
@@ -181,37 +181,33 @@ def main(
     n: int,
     k: int,
     num_samples: int,
+    bpb_coeff: float,
     tokens_path: Path,
     bigrams_path: Path,
+    tokengrams_path: Path,
+    tokengrams_idx_path: Path,
     data_path: Path,
-    bpb_ratio: float,
 ):
     if not os.path.exists(bigrams_path):
+        print("Building bigrams...")
         build_bigrams(tokens_path, bigrams_path)
 
-    with open(bigrams_path, "rb") as f:
-        arr = pickle.load(f)
-        unigram_H = entropy(arr.sum(1))
-        print("Unigram entropy: ", unigram_H)
-        print("Unigram entropy (bpb):", unigram_H * bpb_ratio)
-        conditional_entropy(arr, bpb_ratio)
+        with open(bigrams_path, "rb") as f:
+            arr = pickle.load(f)
+            H = entropy(arr.sum(1))
+            print("Unigram entropy: ", H, "Unigram entropy (bpb):", H * bpb_coeff)
+            H = conditional_entropy(arr)
+            print("Bigram entropy: ", H, "Bigram entropy (bpb):", H * bpb_coeff)
 
+    print("Loading n-gram model...")
     ngram_model = NgramSeqModel(
-        bigrams_path,
-        None,  # one_billion_tokens_path,
-        None,  # one_billion_tokens_index_path,
-        4,
-        k,
+        bigrams_path, tokengrams_path, tokengrams_idx_path, 4, k
     )
 
     # Check sampled sequences look correct
     print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
-    print(
-        f"Loaded ngram model, generating {num_samples} \
-            {n}-gram sequences of {k} tokens..."
-    )
-
+    print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
     data = ngram_model.generate_ngrams(n, num_samples)
     data_dict = {"input_ids": torch.tensor(data)}
     Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
@@ -223,27 +219,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument(
-        "--n",
-        default=3,
-        type=int,
-        help="N-gram order of sequences",
-    )
-    parser.add_argument(
-        "--k",
-        default=2049,
-        type=int,
-        help="Sequence length",
-    )
-    parser.add_argument(
-        "--num_samples",
-        default=1024,
-        type=int,
-        help="Number of sequences",
-    )
+    parser.add_argument("--n", default=3, type=int, help="N-gram model to sample from")
+    parser.add_argument("--k", default=2049, type=int, help="Sample length")
+    parser.add_argument("--num_samples", default=1024, type=int)
+    # bpb_coeff = 0.4157027 # es 1 billion tokens
+    parser.add_argument("--bpb_coeff", default=0.3650388, type=float)  # pile
     parser.add_argument(
         "--data_path",
-        default="data/pile",
+        default="data/pile-deduped",
         type=str,
         help="Path to write data",
     )
@@ -254,29 +237,25 @@ if __name__ == "__main__":
         type=str,
         help="Path to u16 tokenized dataset",
     )
-    # "/mnt/ssd-1/lucia/pythia-deduped-bigrams.pkl",
     parser.add_argument(
         "--bigrams_path",
-        default="data/pile/pythia-deduped-bigrams.pkl",
+        default="data/pile-deduped/bigrams.pkl",
         type=str,
         help="Path to dataset bigram table",
     )
     args = parser.parse_args()
 
-    # es 1 billion tokens
-    # bpb_coefficient = 0.4157027
-    # entropies_bpb = [2.72, 1.50]
-
-    # pile
-    bpb_coefficient = 0.3650388
-    # entropies_bpb = [2.89, 2.04]
+    forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-10G.bin"
+    forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-10G.idx"
 
     main(
         args.n,
         args.k,
         args.num_samples,
+        args.bpb_coeff,
         Path(args.tokens_path),
         Path(args.bigrams_path),
+        Path(forty_billion_tokens_path),
+        Path(forty_billion_tokens_index_path),
         Path(args.data_path),
-        bpb_coefficient,
     )

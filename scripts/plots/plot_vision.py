@@ -333,7 +333,7 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="24-05-24")
+    parser.add_argument("--data_path", type=str, default="output")
     parser.add_argument("--images_path", type=str, default="images")
     args = parser.parse_args()
 

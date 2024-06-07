@@ -1,40 +1,44 @@
 import os
 import re
+from argparse import ArgumentParser
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from scripts.plots.plot_ngram import base_2_log_ticks, kaleido_workaround
+from scripts.plots.plot_ngram import base_2_log_ticks, kaleido_workaround, marker_series
 
 
-def plot(df: pd.DataFrame, image_name: str, model_series: str, num_samples: int):
+def main(data_path: Path, images_path: Path, bpb_coefficient: float, num_samples: int):
+    os.makedirs(images_path, exist_ok=True)
     kaleido_workaround()
 
-    # es 1 billion words
-    bpb_coefficient = 0.4157027
-
-    marker_series = [
-        "circle",
-        "square",
-        "diamond",
-        "cross",
-        "x",
-        "triangle-up",
-        "triangle-down",
-        "triangle-left",
-        "triangle-right",
-        "pentagon",
-        "hexagon",
-        "octagon",
-        "star",
-        "hexagram",
+    image_name = images_path / "learned-bigram-kl-div.pdf"
+    model_metadata = [
+        # ("pythia-14m", "14M"),
+        # ("pythia-70m", "70M"),
+        ("pythia-160m", "160M"),
+        # ("pythia-410m", "410M"),
+        # ("pythia-1b", "1B"),
+        # ("pythia-1.4b", "1.4B"),
+        # ("pythia-2.8b", "2.8B"),
+        # ("pythia-6.9b", "6.9B"),
+        # ("pythia-12b", "12B"),
     ]
+    model_dfs = []
+    for model_name, pretty_model_name in model_metadata:
+        model_df = pd.read_csv(
+            data_path / f"finetune_bigram_{model_name}_{num_samples}-1.csv"
+        )
+        model_df["pretty_model_name"] = pretty_model_name
+        model_dfs.append(model_df)
+    df = pd.concat(model_dfs)
 
     fig = go.Figure()
     for i, model in enumerate(df["pretty_model_name"].unique()):
         df_model = df[df["pretty_model_name"] == model]
+        # Amend bug where .item() not called on data tensors
         df_model["kl_mean_bpb"] = df_model["kl_mean"].map(
             lambda x: float(re.findall(r"tensor\(([^)]+)\)", x)[0]) * bpb_coefficient
         )
@@ -79,35 +83,21 @@ def plot(df: pd.DataFrame, image_name: str, model_series: str, num_samples: int)
     fig.write_image(str(image_name), format="pdf")
 
 
-def main():
-    os.makedirs(Path.cwd() / "images", exist_ok=True)
-
-    model_series = "Pythia"
-    num_samples = 8192  # 1024
-    image_name = Path.cwd() / "images" / "learned-bigram-kl-div.pdf"
-    model_metadata = [
-        # ("pythia-14m", "14M", 8),
-        # ("pythia-70m", "70M", 8),
-        ("pythia-160m", "160M", 8),
-        # ("pythia-410m", "410M", 8),
-        # ("pythia-1b", "1B", 8),
-        # ("pythia-1.4b", "1.4B", 8),
-        # ("pythia-2.8b", "2.8B", 8),
-        # ("pythia-6.9b", "6.9B", 8),
-        # ("pythia-12b", "12B", 8),
-    ]
-
-    model_dfs = []
-    for model_name, pretty_model_name, num_chunks in model_metadata:
-        model_df = pd.read_csv(
-            Path.cwd() / "output" / f"finetune_bigram_{model_name}_{num_samples}-1.csv"
-        )
-        model_df["pretty_model_name"] = pretty_model_name
-        model_dfs.append(model_df)
-
-    df = pd.concat(model_dfs)
-    plot(df, image_name, model_series, num_samples)
-
-
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", type=int, default=8192)
+    args = parser.parse_args()
+
+    # es 1 billion tokens
+    bpb_coefficient = 0.4157027
+    # entropies_bpb = [2.72, 1.50]
+
+    # pile
+    # bpb_coefficient = 0.3650388
+    # entropies_bpb = [2.89, 2.04]
+
+    main(
+        Path(args.data_path), Path(args.images_path), bpb_coefficient, args.num_samples
+    )

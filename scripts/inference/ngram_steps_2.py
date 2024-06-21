@@ -179,7 +179,7 @@ def worker(
             continue
 
         pile = iter(pile_ds)
-        # pile_3_gram_dists = iter(dataloader_3_gram)
+        pile_3_gram_dists = iter(dataloader_3_gram)
         ngram_iters = {n: iter(ds) for n, ds in ngram_data.items()}
         running_means = defaultdict(float)
         for i in range(num_iters):

@@ -57,17 +57,14 @@ class NgramSeqModel:
         with open(bigrams_path, "rb") as f:
             bigram_counts = pickle.load(f).toarray().astype(np.float32)
 
-        print("Loaded bigram counts...")
-
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).cuda()
         self.unigram_probs /= self.unigram_probs.sum()
 
         self.bigrams = bigram_counts + np.finfo(bigram_counts.dtype).eps
         self.bigram_probs = self.bigrams / self.bigrams.sum(axis=1)[:, None]
 
-        print("Loading mmap index...")
         if token_path and token_index_path:
-            self.mmap_index = MemmapIndex(str(token_path), str(token_index_path))
+            self.tokengrams = MemmapIndex(str(token_path), str(token_index_path))
 
     def generate_unigram_seq(self, num_samples: int) -> torch.Tensor:
         return torch.multinomial(
@@ -79,7 +76,7 @@ class NgramSeqModel:
         sequence by sampling from a unigram model.
 
         Underlying data structure: sparse scipy array of bigram counts over the Pile"""
-        data = np.zeros((1024, 2049), dtype=np.int64)
+        data = np.zeros((num_samples, self.seq_len), dtype=np.int64)
         for i in tqdm(range(0, num_samples, self.batch)):
             result = [
                 torch.multinomial(
@@ -107,52 +104,47 @@ class NgramSeqModel:
         elif n == 2:
             return self.generate_bigram_seq(num_samples)
         else:
-            samples = self.mmap_index.batch_sample(
+            import time
+            start = time.time()
+            samples = self.tokengrams.batch_sample(
                 [], n=n, k=self.seq_len, num_samples=num_samples
             )
+            print(time.time() - start, f"seconds to generate {num_samples} * {self.seq} tokens of order {n}")
         return np.array(samples)
 
     def generate_ngram_dists(
-        self, n: int, num_samples: int, vocab_size: int = 50_277
+        self, 
+        data: Dataset, 
+        dist_path: Path, 
+        n: int, 
+        vocab_size: int = 50_277,
+        batch_size: int = 64
     ) -> None:
-        batch = 64
-        num_iters = math.ceil(num_samples / batch)
-        print(num_iters)
-
-        pile_data_loader = DataLoader(
-            load_from_disk("/mnt/ssd-1/lucia/val_tokenized.hf"), batch_size=batch
-        )
-        pile = iter(pile_data_loader)
-
+        print(n)
+        eps = torch.finfo(torch.float64).eps
+        data_loader = DataLoader(data, batch_size)
         mmap = np.memmap(
-            f"{n}-gram-pile-dists.npy",
+            dist_path,
             mode="w+",
             dtype=np.float64,
-            shape=(num_iters * batch * (self.seq_len - 1), vocab_size),
+            shape=(len(data) * self.seq_len, vocab_size),
         )
-        for i in tqdm(range(num_iters)):
-            # dists are compared with logits. there are logits for all positions.
-            # however there are no logits between chunks
+        
+        for i, batch in tqdm(enumerate(data_loader)):
             ngram_prefixes = []
-            tokens_batch = next(pile)["input_ids"]
-            for row in tokens_batch:
+            for row in batch["input_ids"]:
+                # split into sequences of up to n - 1 tokens that end with each token
                 ngram_prefixes.extend(
-                    [row[i : i + (n - 1)].tolist() for i in range(len(row) - (n - 2))]
+                    [row[max(0, i - (n - 1)) : i].tolist() for i in range(len(row))]
                 )
-
             counts = torch.tensor(
-                self.mmap_index.batch_next_token_counts(ngram_prefixes, vocab_size)
-            )[:, :vocab_size]
+                self.tokengrams.batch_count_next(ngram_prefixes, vocab_size),
+            )[:, :-1]
             probs = counts / (
-                counts.sum(dim=1).unsqueeze(1) + torch.finfo(torch.float64).eps
-            )
+                counts.sum(dim=1, keepdim=True) + eps)
             probs = probs.log()
-            # 8192 50304
 
-            # 8192 = 4 * (8192 - 1)
-            chunk_len = batch * (self.seq_len - 1)
-            print(batch, chunk_len, self.seq_len, batch * (self.seq_len - 1))
-            print(((i * chunk_len) + chunk_len) - (i * chunk_len))
+            chunk_len = batch_size * self.seq_len
             mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(
                 probs, dtype=np.float64
             )
@@ -203,7 +195,7 @@ def main(
     ngram_model = NgramSeqModel(
         bigrams_path, tokengrams_path, tokengrams_idx_path, 4, k
     )
-
+    print("Loaded n-gram model...")
     # Check sampled sequences look correct
     print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
@@ -212,18 +204,20 @@ def main(
     data_dict = {"input_ids": torch.tensor(data)}
     Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
-    # ngram_model.generate_ngram_dists(n, num_samples=1024)
+    # pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
+    # dist_path = data_path / f"{n}-gram-pile-dists.npy"
+    # ngram_model.generate_ngram_dists(pile_val, dist_path, n)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument("--n", default=3, type=int, help="N-gram model to sample from")
-    parser.add_argument("--k", default=2049, type=int, help="Sample length")
+    parser.add_argument("--n", default=3, help="N-gram model to sample from", type=int) # nargs="+", 
+    parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)
     # bpb_coeff = 0.4157027 # es 1 billion tokens
-    parser.add_argument("--bpb_coeff", default=0.3650388, type=float)  # pile
+    parser.add_argument("--bpb_coeff", default=0.3650388, type=float) # pile
     parser.add_argument(
         "--data_path",
         default="data/pile-deduped",
@@ -245,8 +239,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    forty_billion_tokens_path = "/mnt/ssd-1/nora/pile-10G.bin"
-    forty_billion_tokens_index_path = "/mnt/ssd-1/nora/pile-10G.idx"
+    tokengrams_path = "/mnt/ssd-1/nora/pile-10G.bin"
+    tokengrams_index_path = "/mnt/ssd-1/nora/pile-10G.idx"
 
     main(
         args.n,
@@ -255,7 +249,7 @@ if __name__ == "__main__":
         args.bpb_coeff,
         Path(args.tokens_path),
         Path(args.bigrams_path),
-        Path(forty_billion_tokens_path),
-        Path(forty_billion_tokens_index_path),
+        Path(tokengrams_path),
+        Path(tokengrams_index_path),
         Path(args.data_path),
     )

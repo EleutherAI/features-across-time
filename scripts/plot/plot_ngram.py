@@ -78,8 +78,8 @@ def main(
         ("pythia-1b", "1B"),
         ("pythia-1.4b", "1.4B"),
         ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
+        # ("pythia-6.9b", "6.9B"),
+        # ("pythia-12b", "12B"),
     ]
     # model_metadata = [
     #     (f'es_{model_name}', pretty_name)
@@ -97,12 +97,14 @@ def main(
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     fig = make_subplots(
         rows=2,
-        cols=2,
+        cols=4,
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            "Unigram sequence loss across time",
-            "Bigram sequence loss across time",
+            "1-gram sequence loss across time",
+            "2-gram sequence loss across time",
+            "3-gram sequence loss across time",
+            "4-gram sequence loss across time",
             f"D<sub>KL</sub>(unigram model || {model_series}) across time",
             f"D<sub>KL</sub>(bigram model || {model_series}) across time",
         ],
@@ -110,12 +112,12 @@ def main(
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["1_gram", "2_gram"]):  # "3_gram"
+    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram"]): # "4_gram"
         df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
-            lambda x: get_confidence_intervals(x, 1024)[0]
+            lambda x: get_confidence_intervals(x, num_samples)[0]
         )
         df[f"{ngram}_loss_top_conf"] = df[f"mean_{ngram}_loss"].map(
-            lambda x: get_confidence_intervals(x, 1024)[1]
+            lambda x: get_confidence_intervals(x, num_samples)[1]
         )
 
         df[f"{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
@@ -189,10 +191,10 @@ def main(
     ]
     for label, row, col in div_metadata:
         df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
-            lambda x: get_confidence_intervals(x, 1024)[0]
+            lambda x: get_confidence_intervals(x, num_samples)[0]
         )
         df[f"bottom_conf_{label}"] = df[f"mean_{label}"].map(
-            lambda x: get_confidence_intervals(x, 1024)[1]
+            lambda x: get_confidence_intervals(x, num_samples)[1]
         )
 
         df[f"top_conf_{label}_bpb"] = df[f"top_conf_{label}"] * bpb_coefficient

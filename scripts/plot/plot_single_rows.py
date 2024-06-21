@@ -19,28 +19,30 @@ def plot_loss_and_divergences(
     df: pd.DataFrame,
     loss_image_name: str,
     divergence_image_name: str,
+    num_samples: int,
     bpb_coefficient=0.3650388,
     entropies=[2.89, 2.04],
     qualitative=False,
-    num_samples=1024,
 ):
     kaleido_workaround()
 
     fig = make_subplots(
         rows=1,
-        cols=2,
+        cols=4,
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            "Unigram sequence loss across time",
-            "Bigram sequence loss across time",
+            "1-gram sequence loss across time",
+            "2-gram sequence loss across time",
+            "3-gram sequence loss across time",
+            "4-gram sequence loss across time",
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.05,
     )
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
 
-    for idx, ngram in enumerate(["1_gram", "2_gram"]):
+    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram", "4_gram"]):
         df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -104,20 +106,21 @@ def plot_loss_and_divergences(
                 col=idx + 1,
             )
 
-        entropy = entropies[idx]
-        fig.add_shape(
-            type="line",
-            x0=1,
-            y0=entropy,
-            x1=2**17,
-            y1=entropy,
-            line=dict(color="black", width=2, dash="dot"),
-            row=1,
-            col=idx + 1,
-        )
+        if idx < 2:
+            entropy = entropies[idx]
+            fig.add_shape(
+                type="line",
+                x0=1,
+                y0=entropy,
+                x1=2**17,
+                y1=entropy,
+                line=dict(color="black", width=2, dash="dot"),
+                row=1,
+                col=idx + 1,
+            )
 
     fig.update_layout(
-        width=1000,
+        width=1200,
         height=400,
         legend=dict(
             x=0.98,
@@ -285,8 +288,8 @@ def plot_suite(
         ("pythia-1b", "1B"),
         ("pythia-1.4b", "1.4B"),
         ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
+        # ("pythia-6.9b", "6.9B"),
+        # ("pythia-12b", "12B"),
     ]
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
@@ -299,7 +302,7 @@ def plot_suite(
     loss_image_name = images_path / "ngram-loss.pdf"
     divergence_image_name = images_path / "ngram-divergence.pdf"
     plot_loss_and_divergences(
-        df, loss_image_name, divergence_image_name, bpb_coefficient, entropies
+        df, loss_image_name, divergence_image_name, num_samples, bpb_coefficient, entropies
     )
 
 
@@ -327,7 +330,7 @@ def plot_warmups(
         loss_name = images_path / f"warmups-{model_size}m-loss.pdf"
         divergence_name = images_path / f"warmups-{model_size}m-divergence.pdf"
         plot_loss_and_divergences(
-            df, loss_name, divergence_name, bpb_coefficient, entropies, qualitative=True
+            df, loss_name, divergence_name, num_samples, bpb_coefficient, entropies, qualitative=True
         )
 
 

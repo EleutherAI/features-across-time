@@ -1,5 +1,4 @@
 import argparse
-import math
 import os
 import pickle
 from pathlib import Path
@@ -7,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from datasets import Dataset, load_from_disk
+from datasets import Dataset
 from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.stats import entropy
@@ -105,20 +104,24 @@ class NgramSeqModel:
             return self.generate_bigram_seq(num_samples)
         else:
             import time
+
             start = time.time()
             samples = self.tokengrams.batch_sample(
                 [], n=n, k=self.seq_len, num_samples=num_samples
             )
-            print(time.time() - start, f"seconds to generate {num_samples} * {self.seq} tokens of order {n}")
+            print(
+                time.time() - start,
+                f"seconds to generate {num_samples} * {self.seq} tokens of order {n}",
+            )
         return np.array(samples)
 
     def generate_ngram_dists(
-        self, 
-        data: Dataset, 
-        dist_path: Path, 
-        n: int, 
+        self,
+        data: Dataset,
+        dist_path: Path,
+        n: int,
         vocab_size: int = 50_277,
-        batch_size: int = 64
+        batch_size: int = 64,
     ) -> None:
         print(n)
         eps = torch.finfo(torch.float64).eps
@@ -129,7 +132,7 @@ class NgramSeqModel:
             dtype=np.float64,
             shape=(len(data) * self.seq_len, vocab_size),
         )
-        
+
         for i, batch in tqdm(enumerate(data_loader)):
             ngram_prefixes = []
             for row in batch["input_ids"]:
@@ -140,8 +143,7 @@ class NgramSeqModel:
             counts = torch.tensor(
                 self.tokengrams.batch_count_next(ngram_prefixes, vocab_size),
             )[:, :-1]
-            probs = counts / (
-                counts.sum(dim=1, keepdim=True) + eps)
+            probs = counts / (counts.sum(dim=1, keepdim=True) + eps)
             probs = probs.log()
 
             chunk_len = batch_size * self.seq_len
@@ -213,11 +215,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument("--n", default=3, help="N-gram model to sample from", type=int) # nargs="+", 
+    parser.add_argument(
+        "--n", default=3, help="N-gram model to sample from", type=int
+    )  # nargs="+",
     parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)
     # bpb_coeff = 0.4157027 # es 1 billion tokens
-    parser.add_argument("--bpb_coeff", default=0.3650388, type=float) # pile
+    parser.add_argument("--bpb_coeff", default=0.3650388, type=float)  # pile
     parser.add_argument(
         "--data_path",
         default="data/pile-deduped",

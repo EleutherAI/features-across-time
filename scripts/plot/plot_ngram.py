@@ -112,7 +112,7 @@ def main(
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram"]): # "4_gram"
+    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram"]):  # "4_gram"
         df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )

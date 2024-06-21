@@ -27,10 +27,10 @@ from scripts.script_utils.divergences import (
 class NgramDistDataset(Dataset):
     def __init__(self, memmap_file, num_samples, seq_len, d_vocab):
         self.data = np.memmap(
-            memmap_file, 
-            dtype=np.float32, 
-            mode='r', 
-            shape=(num_samples, seq_len, d_vocab)
+            memmap_file,
+            dtype=np.float32,
+            mode="r",
+            shape=(num_samples, seq_len, d_vocab),
         )
 
     def __len__(self):
@@ -42,7 +42,15 @@ class NgramDistDataset(Dataset):
 
 
 class NgramModel:
-    def __init__(self, path: Path, seq_len: int, d_vocab: int, device: str, tokengrams_path: str, tokengram_idx_path: str):
+    def __init__(
+        self,
+        path: Path,
+        seq_len: int,
+        d_vocab: int,
+        device: str,
+        tokengrams_path: str,
+        tokengram_idx_path: str,
+    ):
         self.d_vocab = d_vocab
         self.seq_len = seq_len
         self.device = device
@@ -56,13 +64,10 @@ class NgramModel:
         self.bigram_probs = (
             torch.tensor(self.bigram_probs).to_sparse().to_sparse_csr().to(self.device)
         )
-        
+
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
-        self.tokengrams = MemmapIndex(
-            tokengrams_path,
-            tokengram_idx_path
-        )
+        self.tokengrams = MemmapIndex(tokengrams_path, tokengram_idx_path)
 
     def get_bigram_prob(self, prev: Tensor) -> Tensor:
         starts = self.bigram_probs.crow_indices()[prev]
@@ -91,7 +96,7 @@ class NgramModel:
         # Fill in n-1 grams with the appropriate n-gram model
         # if len(tokens.shape) == 1:
         #     ngram_prefixes = [(tokens[max(0, i - (n - 1)) : i].tolist()) for i in range(len(row))]
-        
+
         ngram_prefixes = []
         for row in tokens:
             # split into sequences of up to n - 1 tokens that end with each token
@@ -139,7 +144,7 @@ def worker(
         d_vocab,
         "cuda",
         f"/mnt/ssd-1/nora/pile-{tokengrams_size}.bin",
-        f"/mnt/ssd-1/nora/pile-{tokengrams_size}.idx" # Unused, can be anything
+        f"/mnt/ssd-1/nora/pile-{tokengrams_size}.idx",  # Unused, can be anything
     )
 
     print("Loaded data...")
@@ -158,7 +163,7 @@ def worker(
                     f"EleutherAI/{model_name}",
                     torch_dtype="auto",
                     revision=f"step{step}",
-                    cache_dir=".cache"
+                    cache_dir=".cache",
                 ).cuda()
                 success = True
                 break
@@ -174,12 +179,12 @@ def worker(
                         if div:
                             data[f"mean_{n}_gram_kl_div"].append(np.nan)
                             data[f"mean_{n}_gram_js_div"].append(np.nan)
-        
+
         if not success:
             continue
 
         pile = iter(pile_ds)
-        pile_3_gram_dists = iter(dataloader_3_gram)
+        iter(dataloader_3_gram)
         ngram_iters = {n: iter(ds) for n, ds in ngram_data.items()}
         running_means = defaultdict(float)
         for i in range(num_iters):
@@ -203,12 +208,12 @@ def worker(
                         ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
                     )
                     # else:
-                        # ngram_dists = torch.tensor(pile_3_gram_dists[
-                        #     i * batch_size : 
-                        #     (i + 1) * batch_size
-                        # ], device="cuda").flatten(0, 1)
-                        # ngram_dists = next(pile_3_gram_dists).cuda().flatten(0, 1)
-                        # print("got")
+                    # ngram_dists = torch.tensor(pile_3_gram_dists[
+                    #     i * batch_size :
+                    #     (i + 1) * batch_size
+                    # ], device="cuda").flatten(0, 1)
+                    # ngram_dists = next(pile_3_gram_dists).cuda().flatten(0, 1)
+                    # print("got")
                     running_means[f"mean_{n}_gram_kl_div"] += (
                         kl_divergence_log_space(ngram_dists, logits).mean().item()
                         / num_iters
@@ -283,7 +288,8 @@ def main(
         )
         df = pd.concat([pd.DataFrame(d) for d in data])
         df.to_csv(
-            output_path / f"ngram_{model_name}_{num_samples}_{ngram_orders}_{tokengrams_size if div else ''}.csv",
+            output_path
+            / f"ngram_{model_name}_{num_samples}_{ngram_orders}_{tokengrams_size if div else ''}.csv",
             index=False,
         )
 

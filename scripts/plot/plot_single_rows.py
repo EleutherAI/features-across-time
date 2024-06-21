@@ -302,7 +302,12 @@ def plot_suite(
     loss_image_name = images_path / "ngram-loss.pdf"
     divergence_image_name = images_path / "ngram-divergence.pdf"
     plot_loss_and_divergences(
-        df, loss_image_name, divergence_image_name, num_samples, bpb_coefficient, entropies
+        df,
+        loss_image_name,
+        divergence_image_name,
+        num_samples,
+        bpb_coefficient,
+        entropies,
     )
 
 
@@ -330,7 +335,13 @@ def plot_warmups(
         loss_name = images_path / f"warmups-{model_size}m-loss.pdf"
         divergence_name = images_path / f"warmups-{model_size}m-divergence.pdf"
         plot_loss_and_divergences(
-            df, loss_name, divergence_name, num_samples, bpb_coefficient, entropies, qualitative=True
+            df,
+            loss_name,
+            divergence_name,
+            num_samples,
+            bpb_coefficient,
+            entropies,
+            qualitative=True,
         )
 
 

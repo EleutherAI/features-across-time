@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import plotly.express as px
 import torch
 import torchvision.transforms.functional as TF
 from concept_erasure.utils import assert_type
@@ -12,7 +13,6 @@ from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dat
 from einops import rearrange
 from torch import Tensor
 from tqdm import tqdm
-import plotly.express as px
 
 from scripts.script_utils.dury_distribution import DuryDistribution
 from scripts.script_utils.truncated_normal import truncated_normal
@@ -52,13 +52,13 @@ def to_psd(sigma):
 
 
 def truncated_normal_ds_with_moments(
-        n: int, 
-        class_moments: list[tuple], 
-        seed: int, 
-        data_path: Path,
-        ds_name: str, 
-        sample_item: Tensor
-    ):
+    n: int,
+    class_moments: list[tuple],
+    seed: int,
+    data_path: Path,
+    ds_name: str,
+    sample_item: Tensor,
+):
     X = []
     Y = []
 
@@ -68,7 +68,7 @@ def truncated_normal_ds_with_moments(
         Y.extend([i] * n)
 
         fig = px.histogram(X[-1].cpu()[:, 0, 0, 0])
-        fig.write_image(f"mu-class-{i}-{ds_name}.png", format='png')
+        fig.write_image(f"mu-class-{i}-{ds_name}.png", format="png")
 
     data_dict = {
         "pixel_values": torch.cat(X),
@@ -77,8 +77,8 @@ def truncated_normal_ds_with_moments(
     ds = Dataset.from_dict(data_dict).shuffle(seed)
     ds.save_to_disk(str(data_path / ds_name))
     return ds
-    
-    
+
+
 def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
     os.makedirs(output_path, exist_ok=True)
 
@@ -128,8 +128,8 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
     }
 
     def high_var_ds():
-        device="cuda:0"
-        num_samples = 50_000 # len(ds["train"]) 
+        device = "cuda:0"
+        num_samples = 50_000  # len(ds["train"])
         # seed = 1
         sample_item = class_data[0][0].permute(1, 0, 2)
         sample_sigma = torch.stack([sample_item, sample_item]).flatten(1, 3).T.cov()
@@ -147,11 +147,11 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         #     )
         # ]
         # truncated_normal_ds_with_moments(
-        #     num_samples, 
-        #     class_moments, 
-        #     seed, 
+        #     num_samples,
+        #     class_moments,
+        #     seed,
         #     output_path,
-        #     f'var_diff.hf', 
+        #     f'var_diff.hf',
         #     sample_item
         # )
 
@@ -168,9 +168,9 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         #     )
         # ]
         # truncated_normal_ds_with_moments(
-        #     num_samples, 
-        #     class_moments, 
-        #     seed, 
+        #     num_samples,
+        #     class_moments,
+        #     seed,
         #     output_path,
         #     f'mean_diff.hf',
         #     sample_item
@@ -188,9 +188,9 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         #     )
         # ]
         # truncated_normal_ds_with_moments(
-        #     num_samples, 
-        #     class_moments, 
-        #     seed, 
+        #     num_samples,
+        #     class_moments,
+        #     seed,
         #     output_path,
         #     f'high_mu_low_sigma.hf',
         #     sample_item
@@ -200,22 +200,22 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         # Each pixel has a slightly different (mu, sigma) to work around determinism in the sampler
         mu = 0.44
         class_moments = [
-            (   
+            (
                 mu + torch.rand_like(sample_item.flatten(), device=device) * 0.001,
                 to_psd(0.5 + torch.rand_like(sample_sigma, device=device) * 0.001),
             ),
             (
                 mu + torch.rand_like(sample_item.flatten(), device=device) * 0.001,
                 to_psd(0.001 + torch.rand_like(sample_sigma, device=device) * 0.001),
-            )
+            ),
         ]
         truncated_normal_ds_with_moments(
-            num_samples, 
-            class_moments, 
-            seed, 
+            num_samples,
+            class_moments,
+            seed,
             output_path,
-            f'high_sigma_diff.hf',
-            sample_item
+            "high_sigma_diff.hf",
+            sample_item,
         )
 
     high_var_ds()
@@ -227,7 +227,7 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         prev_Y = []
         for label, data in tqdm(class_data.items()):
             targets = {i: mu for i, mu in mus.items() if i != label}
-    
+
             for target, mu in targets.items():
                 shifted = bounded_shift(torch.stack(data), mu, bounds=(0.0, 1.0))
                 Y.extend([target] * len(data))
@@ -242,6 +242,7 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
             str(output_path / f'shifted-{dataset_str.replace("/", "--")}.hf')
         )
+
     # mean_shifted_ds()
 
     def dury_ds():
@@ -259,6 +260,7 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
             str(output_path / f'dury-{dataset_str.replace("/", "--")}.hf')
         )
+
     # dury_ds()
 
     def truncated_normal_ds():
@@ -279,7 +281,10 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         for label, data in tqdm(train_class_data.items()):
             sigma = torch.stack(data).float().flatten(1, 3).T.cov()
             sample = truncated_normal(
-                len(data), torch.stack(data).float().mean(dim=0).flatten(), sigma, seed=seed
+                len(data),
+                torch.stack(data).float().mean(dim=0).flatten(),
+                sigma,
+                seed=seed,
             )
             X.append(sample.reshape(len(data), *data[0].shape))
             Y.extend([label] * len(data))
@@ -288,6 +293,7 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
             str(output_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf')
         )
+
     # truncated_normal_ds()
 
 

@@ -84,7 +84,7 @@ def worker(
     seq_len: int,
     ngram_orders: list[int],
     ngram_path: Path,
-    pile_path: Path
+    pile_path: Path,
 ) -> pd.DataFrame:
     print("steps", steps)
     torch.cuda.set_device(gpu_id)
@@ -106,7 +106,7 @@ def worker(
     print("Loaded data...")
 
     # Collect inference data
-    data = defaultdict(list) 
+    data = defaultdict(list)
 
     num_iters = math.ceil(num_samples / batch_size)
     pbar = tqdm(total=len(steps) * num_iters, position=gpu_id)
@@ -135,11 +135,16 @@ def worker(
             for n in ngram_orders:
                 tokens = next(ngram_iters[n])["input_ids"].cuda()
                 logits = model(tokens).logits[:, :, :d_vocab]
-                mean_loss = F.cross_entropy(
-                    logits[:, :-1].flatten(0, 1),
-                    tokens[:, 1:].flatten(0, 1),
-                    reduction="none",
-                ).reshape_as(tokens[:, 1:]).mean(dim=0).cpu()
+                mean_loss = (
+                    F.cross_entropy(
+                        logits[:, :-1].flatten(0, 1),
+                        tokens[:, 1:].flatten(0, 1),
+                        reduction="none",
+                    )
+                    .reshape_as(tokens[:, 1:])
+                    .mean(dim=0)
+                    .cpu()
+                )
 
                 running_means[f"mean_{n}_gram_loss"] += mean_loss / num_iters
 
@@ -148,12 +153,10 @@ def worker(
             ngram_dists = ngram_model.get_ngram_prob(tokens, n).cuda().log()
             for n in ngram_orders:
                 running_means[f"mean_{n}_gram_kl_div"] += (
-                    kl_divergence_log_space(ngram_dists, logits).cpu()
-                    / num_iters
+                    kl_divergence_log_space(ngram_dists, logits).cpu() / num_iters
                 )
                 running_means[f"mean_{n}_gram_js_div"] += (
-                    js_divergence_log_space(ngram_dists, logits).cpu()
-                    / num_iters
+                    js_divergence_log_space(ngram_dists, logits).cpu() / num_iters
                 )
 
             pbar.update(1)

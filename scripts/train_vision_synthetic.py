@@ -13,7 +13,15 @@ import torchvision.transforms.functional as TF
 from concept_erasure import QuadraticEditor, QuadraticFitter
 from concept_erasure.quantile import QuantileNormalizer
 from concept_erasure.utils import assert_type
-from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset, load_from_disk
+from datasets import (
+    ClassLabel,
+    Dataset,
+    DatasetDict,
+    Features,
+    Image,
+    load_dataset,
+    load_from_disk,
+)
 from einops import rearrange
 from torch import Tensor, nn, optim
 from torch.distributions import MultivariateNormal
@@ -173,11 +181,15 @@ class LogSpacedCheckpoint(TrainerCallback):
 @dataclass
 class LossLoggingCallback(TrainerCallback):
     def on_log(self, args, state, control, logs=None, **kwargs):
-        gpu_rank = int(os.environ.get('LOCAL_RANK', '0'))
-        if 'loss' in logs:
-            print(f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}")
-        if 'eval_loss' in logs:
-            print(f"{gpu_rank}: Step {state.global_step}: Evaluation loss: {logs['eval_loss']}")
+        gpu_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        if "loss" in logs:
+            print(
+                f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}"
+            )
+        if "eval_loss" in logs:
+            print(
+                f"{gpu_rank}: Step {state.global_step}: Evaluation loss: {logs['eval_loss']}"
+            )
 
 
 def infer_columns(feats: Features) -> tuple[str, str]:
@@ -285,10 +297,10 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
         Y = assert_type(Tensor, val[label_col])
 
     # train = load_from_disk
-    max_entropy = load_from_disk(Path.cwd() / f'shifted-data/dury-{dataset_str}.hf')
-    max_entropy.set_format('torch', columns=['pixel_values','label'])
-    shifted = load_from_disk(Path.cwd() / f'shifted-data/shifted-{dataset_str}.hf')
-    shifted.set_format('torch', columns=['pixel_values','label'])
+    max_entropy = load_from_disk(Path.cwd() / f"shifted-data/dury-{dataset_str}.hf")
+    max_entropy.set_format("torch", columns=["pixel_values", "label"])
+    shifted = load_from_disk(Path.cwd() / f"shifted-data/shifted-{dataset_str}.hf")
+    shifted.set_format("torch", columns=["pixel_values", "label"])
 
     val_sets = {
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
@@ -472,15 +484,20 @@ if __name__ == "__main__":
     os.environ["WANDB_PROJECT"] = "features-across-time"
 
     parser = ArgumentParser()
-    parser.add_argument("--datasets", type=str, default=[
-            "cifar10", 
-            "svhn:cropped_digits", 
-            "mnist", 
-            "evanarlian/imagenet_1k_resized_256", 
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        default=[
+            "cifar10",
+            "svhn:cropped_digits",
+            "mnist",
+            "evanarlian/imagenet_1k_resized_256",
             "fashion_mnist",
             "cifarnet",
-            "high_var"
-        ], nargs="+")
+            "high_var",
+        ],
+        nargs="+",
+    )
     parser.add_argument(
         "--nets",
         type=str,

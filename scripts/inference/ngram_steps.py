@@ -6,6 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Callable
 import os
+import time
 
 import numpy as np
 import pandas as pd
@@ -147,6 +148,13 @@ def worker(
         str(ngram_path / f"pile-{tokengrams_size}.bin"),
         str(ngram_path / f"pile-{tokengrams_size}.idx"),
     )
+    pile_3_gram_dists = np.memmap(
+        str(ngram_path / "3-gram-pile-dists.npy"),
+        dtype=np.float32, 
+        mode='r+', 
+        shape=(num_samples, seq_len, d_vocab)
+    )
+
 
     print("Loaded data...")
 
@@ -204,17 +212,17 @@ def worker(
                 tokens = next(pile)["input_ids"].cuda()
                 logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
                 for n in ngram_orders:
-                    # if n != 3:
-                    ngram_dists = (
-                        ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
-                    )
-                    # else:
-                    # ngram_dists = torch.tensor(pile_3_gram_dists[
-                    #     i * batch_size :
-                    #     (i + 1) * batch_size
-                    # ], device="cuda").flatten(0, 1)
-                    # ngram_dists = next(pile_3_gram_dists).cuda().flatten(0, 1)
-                    # print("got")
+                    if n != 3:
+                        ngram_dists = (
+                            ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
+                        )
+                    else:
+                        ngram_dists = torch.tensor(pile_3_gram_dists[
+                            i * batch_size :
+                            (i + 1) * batch_size
+                        ], device="cuda").flatten(0, 1)
+                        # ngram_dists = next(pile_3_gram_dists).cuda().flatten(0, 1)
+                        print("got")
                     running_means[f"mean_{n}_gram_kl_div"] += (
                         kl_divergence_log_space(ngram_dists, logits).mean().item()
                         / num_iters
@@ -264,21 +272,54 @@ def main(
             ("pythia-14m-warmup01", 8),
             ("pythia-70m-warmup01", 4),
         ]
-        + [(f"pythia-14m-seed{i}", 8) for i in range(3, 10)]
+        + [(f"pythia-14m-seed{i}", 16) for i in range(1, 10)]
         + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
-        + [(f"pythia-160m-seed{i}", 4) for i in range(8, 10)]
+        + [(f"pythia-160m-seed{i}", 8) for i in range(1, 10)]
         + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
     ):
         print("Collecting data for", model_name)
 
-        # current_data = pd.read_csv(
-        #     output_path / f"ngram_{model_name}_{num_samples}.csv"
-        # )
-        # # get steps where the row contains a na
-        # steps = current_data[current_data['mean_2_gram_kl_div'].isnull()]["step"].tolist()
-        # if not steps:
-        #     continue
+        current_df_path = output_path / f"ngram_{model_name}_{num_samples}.csv"
+        if current_df_path.exists():
+            current_df = pd.read_csv(current_df_path)
+            
+            missing_steps = set()
+            for ngram_order in ngram_orders:
+                if loss:
+                    if not f'mean_{ngram_order}_gram_loss' in current_df.columns:
+                        missing_steps.update(steps)
+                    elif f'mean_{ngram_order}_gram_loss' in current_df:
+                        missing_steps.update(
+                            current_df[current_df[f'mean_{ngram_order}_gram_loss'].isnull()]["step"].tolist()
+                        )
+                if div:
+                    if not f'mean_{ngram_order}_gram_kl_div' in current_df.columns:
+                        missing_steps.update(steps)
+                    elif f'mean_{ngram_order}_gram_kl_div' in current_df:
+                        missing_steps.update(
+                            current_df[current_df[f'mean_{ngram_order}_gram_kl_div'].isnull()]["step"].tolist()
+                        )
 
+            if not missing_steps:
+                continue
+
+            steps = [int(step) for step in list(missing_steps)]
+            
+        data = worker(
+            0,
+            steps,
+            model_name,
+            batch_size,
+            num_samples,
+            len(tokenizer.vocab),
+            seq_len,
+            ngram_orders,
+            ngram_path,
+            pile_path,
+            tokengrams_size,
+            div,
+            loss
+        )
         data = run_workers(
             worker,
             # roughly log spaced steps + final step
@@ -296,9 +337,26 @@ def main(
             loss=loss
         )
         df = pd.concat([pd.DataFrame(d) for d in data])
-        df.to_csv(
+
+        current_df.to_csv(
+            output_path /
+            'backup' /
+            f"ngram_{model_name}_{num_samples}_{time.time()}.csv"
+        )
+        df.set_index('step', inplace=True)
+        current_df.set_index('step', inplace=True)
+
+        for col in df.columns:
+            current_df[col] = (
+                df[col].where(df[col].notna(), current_df[col])
+                if col in current_df
+                else df[col]
+            )
+        
+        current_df.reset_index(inplace=True)
+        current_df.to_csv(
             output_path
-            / f"ngram_{model_name}_{num_samples}_{ngram_orders}_{tokengrams_size if div else ''}.csv",
+            / f"ngram_{model_name}_{num_samples}.csv",
             index=False,
         )
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from datasets import Dataset
+from datasets import Dataset, load_from_disk
 from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.stats import entropy
@@ -207,9 +207,9 @@ def main(
         data_dict = {"input_ids": torch.tensor(data)}
         Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
-        # pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
-        # dist_path = data_path / f"{n}-gram-pile-dists.npy"
-        # ngram_model.generate_ngram_dists(pile_val, dist_path, n)
+        pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
+        dist_path = data_path / f"{n}-gram-pile-dists.npy"
+        ngram_model.generate_ngram_dists(pile_val, dist_path, n)
 
 
 if __name__ == "__main__":

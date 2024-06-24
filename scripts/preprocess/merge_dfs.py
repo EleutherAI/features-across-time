@@ -1,5 +1,6 @@
 from pathlib import Path
 from argparse import ArgumentParser
+import time
 
 import numpy as np
 import pandas as pd
@@ -31,7 +32,7 @@ def main(backup_dir: Path):
         base_df_path = Path.cwd() / "output" / f"ngram_{model_name}_1024.csv"
         if base_df_path.exists():
             base_df = pd.read_csv(base_df_path)
-            base_df.to_csv(backup_dir / base_df_path.name, index=False)
+            base_df.to_csv(backup_dir / f'{time.time()}_{base_df_path.name}', index=False)
         
         df_paths = [
             base_df_path,
@@ -40,6 +41,11 @@ def main(backup_dir: Path):
             Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[4]_divs.csv",
             Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[4, 5]_.csv",
             Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[4]_10G.csv",
+            Path.cwd() / "tmp" / f"ngram_{model_name}_1024.csv",
+            Path.cwd() / "tmp" / f"ngram_{model_name}_1024_[3]_actual_divs.csv",
+            Path.cwd() / "tmp" / f"ngram_{model_name}_1024_[4]_divs.csv",
+            Path.cwd() / "tmp" / f"ngram_{model_name}_1024_[4, 5]_.csv",
+            Path.cwd() / "tmp" / f"ngram_{model_name}_1024_[4]_10G.csv",
         ]
         dfs = [pd.read_csv(path) for path in df_paths if path.exists()]
         if not dfs:

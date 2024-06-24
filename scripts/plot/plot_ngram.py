@@ -73,11 +73,11 @@ def main(
     model_metadata = [
         ("pythia-14m", "14M"),
         ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        ("pythia-1.4b", "1.4B"),
-        ("pythia-2.8b", "2.8B"),
+        # ("pythia-160m", "160M"),
+        # ("pythia-410m", "410M"),
+        # ("pythia-1b", "1B"),
+        # ("pythia-1.4b", "1.4B"),
+        # ("pythia-2.8b", "2.8B"),
         # ("pythia-6.9b", "6.9B"),
         # ("pythia-12b", "12B"),
     ]
@@ -97,7 +97,7 @@ def main(
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     fig = make_subplots(
         rows=2,
-        cols=4,
+        cols=5,
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
@@ -105,14 +105,17 @@ def main(
             "2-gram sequence loss across time",
             "3-gram sequence loss across time",
             "4-gram sequence loss across time",
-            f"D<sub>KL</sub>(unigram model || {model_series}) across time",
-            f"D<sub>KL</sub>(bigram model || {model_series}) across time",
+            "5-gram sequence loss across time",
+            f"D<sub>KL</sub>(1-gram model || {model_series}) across time",
+            f"D<sub>KL</sub>(2-gram model || {model_series}) across time",
+            # f"D<sub>KL</sub>(3-gram model || {model_series}) across time",
+            f"D<sub>KL</sub>(4-gram model || {model_series}) across time",
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram"]):  # "4_gram"
+    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram", "4_gram", "5_gram"]):
         df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -172,7 +175,7 @@ def main(
                 col=idx + 1,
             )
 
-        if idx != 2:
+        if idx < 2:
             fig.add_shape(
                 type="line",
                 x0=1,
@@ -188,6 +191,8 @@ def main(
     div_metadata = [
         ("1_gram_kl_div", 2, 1),
         ("2_gram_kl_div", 2, 2),
+        # ("3_gram_kl_div", 2, 3),
+        ("4_gram_kl_div", 2, 4),
     ]
     for label, row, col in div_metadata:
         df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
@@ -247,7 +252,7 @@ def main(
                 col=col,
             )
     fig.update_layout(
-        width=1000,
+        width=1800,
         height=800,
         legend=dict(
             title="Pythia",
@@ -268,7 +273,7 @@ def main(
     fig.update_yaxes(
         title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1
     )
-    fig.update_yaxes(range=[1.8, 5], row=1, col=1)
+    fig.update_yaxes(range=[1, 5], row=1, col=1)
     fig.update_yaxes(range=[0, 4.5], row=2, col=1)
     fig.update_yaxes(
         title_text="KL divergence",

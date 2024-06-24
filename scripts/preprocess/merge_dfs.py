@@ -1,11 +1,14 @@
-import os
 from pathlib import Path
+from argparse import ArgumentParser
 
 import numpy as np
 import pandas as pd
 
 
-def main():
+def main(backup_dir: Path):
+    if not backup_dir.exists():
+        backup_dir.mkdir(parents=True)
+    
     for model_name in (
         [
             "pythia-14m",
@@ -25,17 +28,22 @@ def main():
         + [f"pythia-160m-seed{i}" for i in range(8, 10)]
         + [f"pythia-410m-seed{i}" for i in range(1, 5)]
     ):
-        dfs = [
-            pd.read_csv(Path.cwd() / "output" / f"ngram_{model_name}_1024.csv"),
+        base_df_path = Path.cwd() / "output" / f"ngram_{model_name}_1024.csv"
+        if base_df_path.exists():
+            base_df = pd.read_csv(base_df_path)
+            base_df.to_csv(backup_dir / base_df_path.name, index=False)
+        
+        df_paths = [
+            base_df_path,
+            Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024.csv",
+            Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[3]_actual_divs.csv",
+            Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[4]_divs.csv",
+            Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[4, 5]_.csv",
+            Path.cwd() / "output" / "raw" / f"ngram_{model_name}_1024_[4]_10G.csv",
         ]
-        additional_df_paths = [
-            Path.cwd() / "output" / "dev" / f"ngram_{model_name}_1024.csv",
-            Path.cwd() / "output" / f"ngram_{model_name}_1024_[3]_actual_divs.csv",
-            Path.cwd() / "output" / f"ngram_{model_name}_1024_[4]_divs.csv",
-        ]
-        for path in additional_df_paths:
-            if os.path.exists(path):
-                dfs.append(pd.read_csv(path))
+        dfs = [pd.read_csv(path) for path in df_paths if path.exists()]
+        if not dfs:
+            continue
 
         all_columns = set()
         for df in dfs:
@@ -52,10 +60,18 @@ def main():
             .agg(lambda x: x.dropna().iloc[0] if x.dropna().any() else np.nan)
             .reset_index()
         )
-        merged_df.to_csv(
-            Path.cwd() / "output" / "dev" / f"ngram_{model_name}_1024.csv", index=False
-        )
+        
+        merged_df.to_csv(base_df_path, index=False)
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser()
+    parser.add_argument(
+        "--backup-dir",
+        "-b",
+        default="output/backup",
+        help="Directory to store the original versions of files modified by this script.",
+    )
+    args = parser.parse_args()
+    main(Path(args.backup_dir))
+ 

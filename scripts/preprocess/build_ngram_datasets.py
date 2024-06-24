@@ -111,7 +111,7 @@ class NgramSeqModel:
             )
             print(
                 time.time() - start,
-                f"seconds to generate {num_samples} * {self.seq} tokens of order {n}",
+                f"seconds to generate {num_samples} * {self.seq_len} tokens of order {n}",
             )
         return np.array(samples)
 
@@ -172,7 +172,7 @@ class NgramSeqModel:
 
 
 def main(
-    n: int,
+    ns: list[int],
     k: int,
     num_samples: int,
     bpb_coeff: float,
@@ -182,7 +182,7 @@ def main(
     tokengrams_idx_path: Path,
     data_path: Path,
 ):
-    if not os.path.exists(bigrams_path):
+    if 2 in ns and not os.path.exists(bigrams_path):
         print("Building bigrams...")
         build_bigrams(tokens_path, bigrams_path)
 
@@ -193,22 +193,23 @@ def main(
             H = conditional_entropy(arr)
             print("Bigram entropy: ", H, "Bigram entropy (bpb):", H * bpb_coeff)
 
-    print("Loading n-gram model...")
-    ngram_model = NgramSeqModel(
-        bigrams_path, tokengrams_path, tokengrams_idx_path, 4, k
-    )
-    print("Loaded n-gram model...")
-    # Check sampled sequences look correct
-    print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
+    for n in ns:
+        print(f"Loading {n}-gram model...")
+        ngram_model = NgramSeqModel(
+            bigrams_path, tokengrams_path, tokengrams_idx_path, 4, k
+        )
+        print(f"Loaded {n}-gram model...")
+        # Check sampled sequences look correct
+        print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
-    print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
-    data = ngram_model.generate_ngrams(n, num_samples)
-    data_dict = {"input_ids": torch.tensor(data)}
-    Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
+        print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
+        data = ngram_model.generate_ngrams(n, num_samples)
+        data_dict = {"input_ids": torch.tensor(data)}
+        Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
-    # pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
-    # dist_path = data_path / f"{n}-gram-pile-dists.npy"
-    # ngram_model.generate_ngram_dists(pile_val, dist_path, n)
+        # pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
+        # dist_path = data_path / f"{n}-gram-pile-dists.npy"
+        # ngram_model.generate_ngram_dists(pile_val, dist_path, n)
 
 
 if __name__ == "__main__":
@@ -216,8 +217,8 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "--n", default=3, help="N-gram model to sample from", type=int
-    )  # nargs="+",
+        "--n", default=[3], nargs="+", type=int, help="N-gram models to sample from",
+    )
     parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)
     # bpb_coeff = 0.4157027 # es 1 billion tokens
@@ -243,8 +244,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    tokengrams_path = "/mnt/ssd-1/nora/pile-10G.bin"
-    tokengrams_index_path = "/mnt/ssd-1/nora/pile-10G.idx"
+    tokengrams_path = "data/pile-deduped/pile-10G.bin"
+    tokengrams_index_path = "data/pile-deduped/pile-10G.idx"
 
     main(
         args.n,

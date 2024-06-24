@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable
+import os
 
 import numpy as np
 import pandas as pd
@@ -123,9 +124,10 @@ def worker(
     ngram_orders: list[int],
     ngram_path: Path,
     pile_path: Path,
+    tokengrams_size: str,
+    div: bool,
+    loss: bool
 ) -> pd.DataFrame:
-    loss = False
-    div = True
     print(f"Calculating loss? {loss}. Calculating divs? {div}")
     torch.cuda.set_device(gpu_id)
 
@@ -137,14 +139,13 @@ def worker(
         ds.set_format("torch", columns=["input_ids"])
         ngram_data[n] = DataLoader(ds, batch_size=batch_size)
 
-    tokengrams_size = "10G"
     ngram_model = NgramModel(
         ngram_path / "bigrams.pkl",
         seq_len,
         d_vocab,
         "cuda",
-        f"/mnt/ssd-1/nora/pile-{tokengrams_size}.bin",
-        f"/mnt/ssd-1/nora/pile-{tokengrams_size}.idx",  # Unused, can be anything
+        str(ngram_path / f"pile-{tokengrams_size}.bin"),
+        str(ngram_path / f"pile-{tokengrams_size}.idx"),
     )
 
     print("Loaded data...")
@@ -239,10 +240,15 @@ def main(
     ngram_orders: list[int],
     steps: list[int],
 ):
+    os.makedirs(output_path, exist_ok=True)
+
     mp.set_start_method("spawn")
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     num_samples = 1024
     seq_len = 2049
+    tokengrams_size = "10G"
+    div = True
+    loss = False
 
     for model_name, batch_size in (
         [
@@ -285,6 +291,9 @@ def main(
             ngram_orders=ngram_orders,
             ngram_path=ngram_path,
             pile_path=pile_path,
+            tokengrams_size=tokengrams_size,
+            div=div,
+            loss=loss
         )
         df = pd.concat([pd.DataFrame(d) for d in data])
         df.to_csv(

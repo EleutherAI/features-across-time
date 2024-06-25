@@ -72,7 +72,7 @@ def run_dataset(
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    os.makedirs(data_path, exist_ok=True)
+    data_path.mkdirs(exist_ok=True, parents=True)
 
     path, _, name = dataset_str.partition(":")
     ds = load_dataset(path, name or None)

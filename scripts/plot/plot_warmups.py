@@ -1,4 +1,3 @@
-import os
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -219,7 +218,7 @@ def plot_loss_and_divergence(
 
 
 def main(data_path: Path, images_path: Path):
-    os.makedirs(images_path, exist_ok=True)
+    images_path.mkdirs(exist_ok=True, parents=True)
 
     num_samples = 1024
     for model_size in [14, 70]:

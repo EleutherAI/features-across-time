@@ -1,4 +1,3 @@
-import os
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -349,7 +348,7 @@ def main(data_path: Path, images_path: Path, num_samples: int):
     bpb_coefficient = 0.3650388
     entropies = [2.89, 2.04]
 
-    os.makedirs(images_path, exist_ok=True)
+    images_path.mkdirs(exist_ok=True, parents=True)
 
     plot_suite(data_path, images_path, num_samples, bpb_coefficient, entropies)
     plot_warmups(data_path, images_path, num_samples, bpb_coefficient, entropies)

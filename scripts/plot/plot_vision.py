@@ -1,5 +1,4 @@
 import math
-import os
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import torch
 from datasets import load_from_disk
 from plotly.subplots import make_subplots
 
-from scripts.plots.plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
+from scripts.plot.plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround
 
 
 def num_classes(dataset_str: str):
@@ -22,8 +21,8 @@ def num_classes(dataset_str: str):
     return len(torch.unique(ds["label"]))
 
 
-def main(data_path: str, images_path: str):
-    os.makedirs(images_path, exist_ok=True)
+def main(data_path: Path, images_path: Path):
+    images_path.mkdirs(exist_ok=True, parents=True)
 
     for dataset_str, pretty_dataset_str in [
         ("cifar10", "CIFAR10"),

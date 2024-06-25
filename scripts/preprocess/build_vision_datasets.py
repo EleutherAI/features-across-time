@@ -1,4 +1,3 @@
-import os
 import random
 from argparse import ArgumentParser
 from collections import defaultdict
@@ -80,7 +79,7 @@ def truncated_normal_ds_with_moments(
 
 
 def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
-    os.makedirs(output_path, exist_ok=True)
+    output_path.mkdirs(exist_ok=True, parents=True)
 
     # Seed everything
     np.random.seed(seed)

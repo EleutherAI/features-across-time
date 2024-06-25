@@ -90,7 +90,7 @@ def multi_step_worker(
     experiment: Experiment,
     ngram_path: str,
     pile_path: str,
-    tmp_cache_path: str,
+    tmp_cache_path: Path,
     steps: list[str],
 ) -> pd.DataFrame:
     torch.cuda.set_device(gpu_id)
@@ -98,9 +98,10 @@ def multi_step_worker(
     tokenizer = AutoTokenizer.from_pretrained(
         f"{experiment.team}/{experiment.model_name}"
     )
-    tmp_cache_dir = f"{tmp_cache_path}/{gpu_id}"
+    tmp_cache_dir = tmp_cache_path / gpu_id
+    tmp_cache_dir.mkdirs(exist_ok=True, parents=True)
     shutil.rmtree(tmp_cache_dir, ignore_errors=True)
-    os.makedirs(tmp_cache_dir, exist_ok=True)
+    
     ngram_model = NgramModel(
         ngram_path,
         batch=experiment.batch_size,
@@ -248,7 +249,7 @@ def main(ngram_path: str, pile_path: str, tmp_cache_path: str):
 
     for experiment in experiments:
         df = run_workers(
-            experiment, multi_step_worker, ngram_path, pile_path, tmp_cache_path
+            experiment, multi_step_worker, ngram_path, pile_path, Path(tmp_cache_path)
         )
         df.to_csv(
             Path.cwd()

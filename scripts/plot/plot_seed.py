@@ -1,4 +1,3 @@
-import os
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -173,7 +172,7 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient: float, entropies: list[flo
 
 
 def main(data_path: Path, images_path: Path, num_samples=1024):
-    os.makedirs(images_path, exist_ok=True)
+    images_path.mkdirs(exist_ok=True, parents=True)
 
     model_metadata = [
         ("pythia-14m", "14M", 9),

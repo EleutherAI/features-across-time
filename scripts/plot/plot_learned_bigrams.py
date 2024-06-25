@@ -1,5 +1,3 @@
-import os
-import re
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -7,14 +5,13 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from scripts.plots.plot_ngram import base_2_log_ticks, kaleido_workaround, marker_series
+from scripts.plot.plot_ngram import base_2_log_ticks, kaleido_workaround, marker_series
 
 
 def main(data_path: Path, images_path: Path, bpb_coefficient: float, num_samples: int):
-    os.makedirs(images_path, exist_ok=True)
+    images_path.mkdirs(exist_ok=True, parents=True)
     kaleido_workaround()
 
-    image_name = images_path / "learned-bigram-kl-div.pdf"
     model_metadata = [
         # ("pythia-14m", "14M"),
         # ("pythia-70m", "70M"),
@@ -29,29 +26,25 @@ def main(data_path: Path, images_path: Path, bpb_coefficient: float, num_samples
     model_dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(
-            data_path / f"finetune_bigram_{model_name}_{num_samples}-1.csv"
+            data_path / f"finetune_bigram_{model_name}_{num_samples}.csv"
         )
         model_df["pretty_model_name"] = pretty_model_name
         model_dfs.append(model_df)
     df = pd.concat(model_dfs)
+    df["kl_mean_bpb"] = df["kl_mean"] * bpb_coefficient
+    df["kl_std_bpb"] = df["kl_std"] * bpb_coefficient
 
     fig = go.Figure()
     for i, model in enumerate(df["pretty_model_name"].unique()):
-        df_model = df[df["pretty_model_name"] == model]
-        # Amend bug where .item() not called on data tensors
-        df_model["kl_mean_bpb"] = df_model["kl_mean"].map(
-            lambda x: float(re.findall(r"tensor\(([^)]+)\)", x)[0]) * bpb_coefficient
-        )
-        df_model["kl_std_bpb"] = df_model["kl_std"].map(
-            lambda x: float(re.findall(r"tensor\(([^)]+)\)", x)[0]) * bpb_coefficient
-        )
+        model_df = df[df["pretty_model_name"] == model]
+
         color = px.colors.sequential.Plasma_r[i + 1]
-        y_err = 1.96 * df_model["kl_std_bpb"] / (num_samples**0.5)
+        y_err = 1.96 * model_df["kl_std_bpb"] / (num_samples ** 0.5)
 
         fig.add_trace(
             go.Scatter(
-                x=df_model["step"],
-                y=df_model["kl_mean_bpb"],
+                x=model_df["step"],
+                y=model_df["kl_mean_bpb"],
                 mode="lines+markers",
                 marker=dict(size=5, symbol=marker_series[i + 1]),
                 name=model,
@@ -80,7 +73,7 @@ def main(data_path: Path, images_path: Path, bpb_coefficient: float, num_samples
     fig.update_xaxes(type="log", tickvals=tick_values, ticktext=tick_texts)
     fig.update_yaxes(range=[0, 6])
 
-    fig.write_image(str(image_name), format="pdf")
+    fig.write_image(images_path / "learned-bigram-kl-div.pdf", format="pdf")
 
 
 if __name__ == "__main__":
@@ -99,5 +92,8 @@ if __name__ == "__main__":
     # entropies_bpb = [2.89, 2.04]
 
     main(
-        Path(args.data_path), Path(args.images_path), bpb_coefficient, args.num_samples
+        Path(args.data_path), 
+        Path(args.images_path), 
+        bpb_coefficient, 
+        args.num_samples
     )

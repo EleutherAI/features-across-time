@@ -124,12 +124,12 @@ class NgramSeqModel:
         batch_size: int = 64,
     ) -> None:
         print(n)
-        eps = torch.finfo(torch.float64).eps
+        eps = torch.finfo(torch.float32).eps
         data_loader = DataLoader(data, batch_size)
         mmap = np.memmap(
             dist_path,
             mode="w+",
-            dtype=np.float64,
+            dtype=np.float32,
             shape=(len(data) * self.seq_len, vocab_size),
         )
 
@@ -148,7 +148,7 @@ class NgramSeqModel:
 
             chunk_len = batch_size * self.seq_len
             mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(
-                probs, dtype=np.float64
+                probs, dtype=np.float32
             )
 
     def get_sample_strs(self, n: int, k: int) -> None:

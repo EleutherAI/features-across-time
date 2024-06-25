@@ -1,4 +1,3 @@
-import os
 import tempfile
 import time
 from argparse import ArgumentParser
@@ -66,16 +65,20 @@ def main(
     bpb_coefficient: float,
     ngram_entropies_bpb: list[float],
     num_samples: int,
-):
-    os.makedirs(images_path, exist_ok=True)
-
+    ngram_orders: list[int],
+    name: str,
     model_series = "Pythia"
+):
+    images_path.mkdir(exist_ok=True, parents=True)
+    # model_metadata = [
+    #     (f'es_pythia-160m', "160M")
+    # ]
     model_metadata = [
         ("pythia-14m", "14M"),
         ("pythia-70m", "70M"),
-        # ("pythia-160m", "160M"),
-        # ("pythia-410m", "410M"),
-        # ("pythia-1b", "1B"),
+        ("pythia-160m", "160M"),
+        ("pythia-410m", "410M"),
+        ("pythia-1b", "1B"),
         # ("pythia-1.4b", "1.4B"),
         # ("pythia-2.8b", "2.8B"),
         # ("pythia-6.9b", "6.9B"),
@@ -97,25 +100,20 @@ def main(
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
     fig = make_subplots(
         rows=2,
-        cols=5,
+        cols=len(ngram_orders),
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            "1-gram sequence loss across time",
-            "2-gram sequence loss across time",
-            "3-gram sequence loss across time",
-            "4-gram sequence loss across time",
-            "5-gram sequence loss across time",
-            f"D<sub>KL</sub>(1-gram model || {model_series}) across time",
-            f"D<sub>KL</sub>(2-gram model || {model_series}) across time",
-            # f"D<sub>KL</sub>(3-gram model || {model_series}) across time",
-            f"D<sub>KL</sub>(4-gram model || {model_series}) across time",
+            f"{i}-gram sequence loss across time" for i in ngram_orders
+        ] + [
+            f"D<sub>KL</sub>({i}-gram model || {model_series}) across time"
+            for i in ngram_orders
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
 
-    for idx, ngram in enumerate(["1_gram", "2_gram", "3_gram", "4_gram", "5_gram"]):
+    for idx, ngram in enumerate([f"{i}_gram" for i in ngram_orders]):
         df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -189,12 +187,12 @@ def main(
 
     # df column name, y range, row, col
     div_metadata = [
-        ("1_gram_kl_div", 2, 1),
-        ("2_gram_kl_div", 2, 2),
-        # ("3_gram_kl_div", 2, 3),
-        ("4_gram_kl_div", 2, 4),
+        f"{i}_gram_kl_div"
+        for i in ngram_orders
     ]
-    for label, row, col in div_metadata:
+    row = 2
+
+    for col_idx, label in enumerate(div_metadata):
         df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -222,7 +220,7 @@ def main(
                     hoverinfo="skip",
                 ),
                 row=row,
-                col=col,
+                col=col_idx + 1,
             )
             fig.add_trace(
                 go.Scatter(
@@ -236,7 +234,7 @@ def main(
                     hoverinfo="skip",
                 ),
                 row=row,
-                col=col,
+                col=col_idx + 1,
             )
             fig.add_trace(
                 go.Scatter(
@@ -249,7 +247,7 @@ def main(
                     showlegend=False,
                 ),
                 row=row,
-                col=col,
+                col=col_idx + 1,
             )
     fig.update_layout(
         width=1800,
@@ -273,8 +271,8 @@ def main(
     fig.update_yaxes(
         title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1
     )
-    fig.update_yaxes(range=[1, 5], row=1, col=1)
-    fig.update_yaxes(range=[0, 4.5], row=2, col=1)
+    # fig.update_yaxes(range=[1, 5], row=1, col=1)
+    # fig.update_yaxes(range=[0, 4.5], row=2, col=1)
     fig.update_yaxes(
         title_text="KL divergence",
         title_font=dict(size=12),
@@ -295,14 +293,17 @@ def main(
         )
     )
 
-    fig.write_image(images_path / "ngram-combined.pdf", format="pdf")
+    fig.write_image(images_path / f"{name}.pdf", format="pdf")
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--name", type=str, default="ngram-combined")
     parser.add_argument("--images_path", type=str, default="images")
     parser.add_argument("--num_samples", type=int, default=1024)
+    parser.add_argument("--ngram_orders", "-n", nargs="+", type=int, default=[1, 2, 3, 4])
+    
     args = parser.parse_args()
 
     # es 1 billion tokens
@@ -319,4 +320,6 @@ if __name__ == "__main__":
         bpb_coefficient,
         entropies_bpb,
         args.num_samples,
+        args.ngram_orders,
+        args.name
     )

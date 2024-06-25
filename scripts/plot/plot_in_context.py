@@ -1,4 +1,3 @@
-import os
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -8,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from scripts.plots.plot_ngram import (
+from scripts.plot.plot_ngram import (
     base_2_log_ticks,
     get_confidence_intervals,
     hex_to_rgba,
@@ -25,7 +24,7 @@ def main(
     bpb_coefficient=0.3650388,
     entropies=[2.89, 2.04],
 ):
-    os.makedirs(images_path, exist_ok=True)
+    images_path.mkdirs(exist_ok=True, parents=True)
     kaleido_workaround()
 
     df = pd.read_csv(data_path / f"{model_name}_{num_samples}_steps.csv")

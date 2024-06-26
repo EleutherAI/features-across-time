@@ -8,7 +8,11 @@ from plot_ngram import base_2_log_ticks, hex_to_rgba, kaleido_workaround, marker
 from plotly.subplots import make_subplots
 
 
-def plot_seed_loss(df: pd.DataFrame, bpb_coefficient: float, entropies: list[float]):
+def plot_seed_loss(
+        df: pd.DataFrame, 
+        bpb_coefficient: float, 
+        entropies: list[float]
+    ):
     kaleido_workaround()
 
     tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
@@ -171,7 +175,13 @@ def plot_seed_loss(df: pd.DataFrame, bpb_coefficient: float, entropies: list[flo
         fig.write_image(image_name, format="pdf")
 
 
-def main(data_path: Path, images_path: Path, num_samples=1024):
+def main(
+        data_path: Path, 
+        images_path: Path, 
+        num_samples: int,
+        bpb_coefficient: float,
+        entropies: list[float]
+    ):
     images_path.mkdirs(exist_ok=True, parents=True)
 
     model_metadata = [
@@ -192,9 +202,7 @@ def main(data_path: Path, images_path: Path, num_samples=1024):
             seed_df["pretty_model_name"] = pretty_model_name
             seed_dfs.append(seed_df)
 
-    plot_seed_loss(
-        pd.concat(seed_dfs), bpb_coefficient=0.3650388, entropies=[2.89, 2.04]
-    )
+    plot_seed_loss(pd.concat(seed_dfs), bpb_coefficient, entropies)
 
 
 if __name__ == "__main__":
@@ -203,4 +211,10 @@ if __name__ == "__main__":
     parser.add_argument("--images_path", type=str, default="images")
     args = parser.parse_args()
 
-    main(Path(args.data_path), Path(args.images_path))
+    main(
+        Path(args.data_path), 
+        Path(args.images_path),
+        num_samples=1024,
+        bpb_coefficient=0.3650388,
+        entropies=[2.89, 2.04]
+    )

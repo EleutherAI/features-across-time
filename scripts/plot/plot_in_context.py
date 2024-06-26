@@ -21,14 +21,12 @@ def main(
     images_path: Path,
     data_path: Path,
     num_samples: int,
-    bpb_coefficient=0.3650388,
-    entropies=[2.89, 2.04],
+    bpb_coefficient: float
 ):
-    images_path.mkdirs(exist_ok=True, parents=True)
     kaleido_workaround()
+    images_path.mkdirs(exist_ok=True, parents=True)
 
     df = pd.read_csv(data_path / f"{model_name}_{num_samples}_steps.csv")
-    tick_values, tick_texts = base_2_log_ticks(df["index"])
 
     df["step"] = pd.to_numeric(df["step"], errors="coerce").fillna(0).astype(int)
 
@@ -134,17 +132,6 @@ def main(
                 col=idx + 1,
             )
 
-        # fig.add_shape(
-        #     type="line",
-        #     x0=1,
-        #     y0=entropies[idx],
-        #     x1=2**11,
-        #     y1=entropies[idx],
-        #     line=dict(color="black", width=2, dash="dot"),
-        #     row=1,
-        #     col=idx + 1,
-        # )
-
     fig.update_layout(
         width=600,
         height=400,
@@ -160,6 +147,7 @@ def main(
         margin=dict(l=20, r=20, t=50, b=60),
     )
 
+    tick_values, tick_texts = base_2_log_ticks(df["index"])
     fig.update_xaxes(
         title_text="", type="log", tickvals=tick_values, ticktext=tick_texts
     )
@@ -200,4 +188,10 @@ if __name__ == "__main__":
         # ("pythia-6.9b", 1),
         ("pythia-12b", 1),
     ]:
-        main(model_name, Path(args.images_path), Path(args.data_path), args.num_samples)
+        main(
+            model_name, 
+            Path(args.images_path), 
+            Path(args.data_path), 
+            args.num_samples,
+            bpb_coefficient=0.3650388
+        )

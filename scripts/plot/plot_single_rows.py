@@ -19,8 +19,8 @@ def plot_loss_and_divergences(
     loss_image_name: str,
     divergence_image_name: str,
     num_samples: int,
-    bpb_coefficient=0.3650388,
-    entropies=[2.89, 2.04],
+    bpb_coefficient: float,
+    entropies: list[float],
     qualitative=False,
 ):
     kaleido_workaround()

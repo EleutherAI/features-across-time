@@ -18,9 +18,9 @@ def plot_loss_and_divergence(
     df: pd.DataFrame,
     images_path: Path,
     model_size: int,
-    bpb_coefficient=0.3650388,
-    entropies=[2.89, 2.04],
-    num_samples=1024,
+    bpb_coefficient: float,
+    entropies: list[float],
+    num_samples: int,
 ):
     kaleido_workaround()
     fig = make_subplots(
@@ -104,7 +104,7 @@ def plot_loss_and_divergence(
             type="line",
             x0=1,
             y0=entropies[idx],
-            x1=143000,
+            x1=143_000,
             y1=entropies[idx],
             line=dict(color="black", width=2, dash="dot"),
             row=1,
@@ -217,10 +217,15 @@ def plot_loss_and_divergence(
     fig.write_image(images_path / f"warmups-{model_size}m.pdf", format="pdf")
 
 
-def main(data_path: Path, images_path: Path):
+def main(
+        data_path: Path, 
+        images_path: Path, 
+        num_samples: int,
+        bpb_coefficient: float,
+        entropies: list[float]
+    ):
     images_path.mkdirs(exist_ok=True, parents=True)
-
-    num_samples = 1024
+    
     for model_size in [14, 70]:
         model_metadata = [
             (f"pythia-{model_size}m", f"{model_size}M (fast warmup)"),
@@ -234,13 +239,27 @@ def main(data_path: Path, images_path: Path):
             model_dfs.append(model_df)
 
         df = pd.concat(model_dfs)
-        plot_loss_and_divergence(df, images_path, model_size)
+        plot_loss_and_divergence(
+            df, 
+            images_path, 
+            model_size,
+            bpb_coefficient,
+            entropies,
+            num_samples,
+        )
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, default="output")
     parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", "-s", type=int, default=1024)
     args = parser.parse_args()
 
-    main(Path(args.data_path), Path(args.images_path))
+    main(
+        Path(args.data_path), 
+        Path(args.images_path), 
+        args.num_samples,
+        bpb_coefficient=0.3650388,
+        entropies=[2.89, 2.04]
+    )

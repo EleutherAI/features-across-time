@@ -85,11 +85,11 @@ if __name__ == "__main__":
 
     # es 1 billion tokens
     bpb_coefficient = 0.4157027
-    # entropies_bpb = [2.72, 1.50]
+    # bpb_entropies = [2.72, 1.50]
 
     # pile
     # bpb_coefficient = 0.3650388
-    # entropies_bpb = [2.89, 2.04]
+    # bpb_entropies = [2.89, 2.04]
 
     main(
         Path(args.data_path), 

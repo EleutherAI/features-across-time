@@ -63,31 +63,14 @@ def main(
     data_path: Path,
     images_path: Path,
     bpb_coefficient: float,
-    ngram_entropies_bpb: list[float],
+    ngram_bpb_entropies: list[float],
     num_samples: int,
     ngram_orders: list[int],
     name: str,
-    model_series = "Pythia"
+    model_metadata: list[tuple[str, str]],
+    model_series = "Pythia",
 ):
     images_path.mkdir(exist_ok=True, parents=True)
-    # model_metadata = [
-    #     (f'es_pythia-160m', "160M")
-    # ]
-    model_metadata = [
-        ("pythia-14m", "14M"),
-        ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        # ("pythia-1.4b", "1.4B"),
-        # ("pythia-2.8b", "2.8B"),
-        # ("pythia-6.9b", "6.9B"),
-        # ("pythia-12b", "12B"),
-    ]
-    # model_metadata = [
-    #     (f'es_{model_name}', pretty_name)
-    #     for model_name, pretty_name in model_metadata
-    # ]
     dfs = []
     for model_name, pretty_model_name in model_metadata:
         model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
@@ -177,9 +160,9 @@ def main(
             fig.add_shape(
                 type="line",
                 x0=1,
-                y0=ngram_entropies_bpb[idx],
+                y0=ngram_bpb_entropies[idx],
                 x1=143000,
-                y1=ngram_entropies_bpb[idx],
+                y1=ngram_bpb_entropies[idx],
                 line=dict(color="black", width=2, dash="dot"),
                 row=1,
                 col=idx + 1,
@@ -303,23 +286,46 @@ if __name__ == "__main__":
     parser.add_argument("--images_path", type=str, default="images")
     parser.add_argument("--num_samples", type=int, default=1024)
     parser.add_argument("--ngram_orders", "-n", nargs="+", type=int, default=[1, 2, 3, 4])
-    
+    parser.add_argument("--data", "-d", type=str, default="pile")
     args = parser.parse_args()
 
-    # es 1 billion tokens
-    # bpb_coefficient = 0.4157027
-    # entropies_bpb = [2.72, 1.50]
+    # model_metadata = [
+    #     (f'es_pythia-160m', "160M")
+    # ]
+    model_metadata = [
+        ("pythia-14m", "14M"),
+        ("pythia-70m", "70M"),
+        ("pythia-160m", "160M"),
+        ("pythia-410m", "410M"),
+        ("pythia-1b", "1B"),
+        # ("pythia-1.4b", "1.4B"),
+        # ("pythia-2.8b", "2.8B"),
+        # ("pythia-6.9b", "6.9B"),
+        # ("pythia-12b", "12B"),
+    ]
+    # model_metadata = [
+    #     (f'es_{model_name}', pretty_name)
+    #     for model_name, pretty_name in model_metadata
+    # ]
 
-    # pile
-    bpb_coefficient = 0.3650388
-    entropies_bpb = [2.89, 2.04]
+    data_args = {
+        "pile": dict(
+            bpb_coefficient=0.3650388,
+            bpb_entropies=[2.89, 2.04],
+        ),
+        "es": dict(
+            bpb_coefficient=0.4157027,
+            bpb_entropies=[2.72, 1.50],
+        ),
+    }
 
     main(
         Path(args.data_path),
         Path(args.images_path),
-        bpb_coefficient,
-        entropies_bpb,
+        data_args[args.data]["bpb_coefficient"],
+        data_args[args.data]["bpb_entropies"],
         args.num_samples,
         args.ngram_orders,
-        args.name
+        args.name,
+        model_metadata
     )

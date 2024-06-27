@@ -118,18 +118,18 @@ class NgramSeqModel:
     def generate_ngram_dists(
         self,
         data: Dataset,
-        dist_path: Path,
+        data_path: Path,
         n: int,
         vocab_size: int = 50_277,
         batch_size: int = 64,
     ) -> None:
         print(n)
-        eps = torch.finfo(torch.float32).eps
+        eps = torch.finfo(torch.float16).eps
         data_loader = DataLoader(data, batch_size)
         mmap = np.memmap(
-            dist_path,
+            data_path / f"{n}-gram-pile-dists.npy",
             mode="w+",
-            dtype=np.float32,
+            dtype=np.float16,
             shape=(len(data) * self.seq_len, vocab_size),
         )
 
@@ -148,7 +148,7 @@ class NgramSeqModel:
 
             chunk_len = batch_size * self.seq_len
             mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(
-                probs, dtype=np.float32
+                probs, dtype=np.float16
             )
 
     def get_sample_strs(self, n: int, k: int) -> None:
@@ -202,14 +202,13 @@ def main(
         # Check sampled sequences look correct
         print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
-        print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
-        data = ngram_model.generate_ngrams(n, num_samples)
-        data_dict = {"input_ids": torch.tensor(data)}
-        Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
+        # print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
+        # data = ngram_model.generate_ngrams(n, num_samples)
+        # data_dict = {"input_ids": torch.tensor(data)}
+        # Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
         pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
-        dist_path = data_path / f"{n}-gram-pile-dists.npy"
-        ngram_model.generate_ngram_dists(pile_val, dist_path, n)
+        ngram_model.generate_ngram_dists(pile_val, data_path, n)
 
 
 if __name__ == "__main__":
@@ -244,8 +243,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    tokengrams_path = "data/pile-deduped/pile-10G.bin"
-    tokengrams_index_path = "data/pile-deduped/pile-10G.idx"
+    tokengrams_path = Path(args.data_path) / "document-10G.bin"
+    tokengrams_index_path = Path(args.data_path) / "document-10G.idx"
 
     main(
         args.n,
@@ -254,7 +253,7 @@ if __name__ == "__main__":
         args.bpb_coeff,
         Path(args.tokens_path),
         Path(args.bigrams_path),
-        Path(tokengrams_path),
-        Path(tokengrams_index_path),
+        tokengrams_path,
+        tokengrams_index_path,
         Path(args.data_path),
     )

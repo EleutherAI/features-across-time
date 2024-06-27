@@ -298,10 +298,10 @@ if __name__ == "__main__":
         ("pythia-160m", "160M"),
         ("pythia-410m", "410M"),
         ("pythia-1b", "1B"),
-        # ("pythia-1.4b", "1.4B"),
-        # ("pythia-2.8b", "2.8B"),
-        # ("pythia-6.9b", "6.9B"),
-        # ("pythia-12b", "12B"),
+        ("pythia-1.4b", "1.4B"),
+        ("pythia-2.8b", "2.8B"),
+        ("pythia-6.9b", "6.9B"),
+        ("pythia-12b", "12B"),
     ]
     # model_metadata = [
     #     (f'es_{model_name}', pretty_name)

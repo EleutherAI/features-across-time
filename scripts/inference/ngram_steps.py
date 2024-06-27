@@ -69,8 +69,8 @@ class NgramModel:
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
         self.tokengrams = MemmapIndex(
-            str(path / tokengrams_filename + ".bin"), 
-            str(path / tokengrams_filename + ".idx")
+            str(path / (tokengrams_filename + ".bin")), 
+            str(path / (tokengrams_filename + ".idx"))
         )
 
     def get_bigram_prob(self, prev: Tensor) -> Tensor:
@@ -142,13 +142,17 @@ def worker(
         tokengrams_filename,
         "cuda"
     )
-    pile_3_gram_dists = np.memmap(
-        str(ngram_path / "3-gram-pile-dists.npy"),
-        dtype=np.float32, 
-        mode='r+', 
-        shape=(num_samples * seq_len, d_vocab)
-    )
 
+    if div:
+        pile_n_gram_dists = {
+            n: np.memmap(
+                str(ngram_path / f"{n}-gram-pile-dists.npy"),
+                dtype=np.float16, 
+                mode='r+', 
+                shape=(num_samples * seq_len, d_vocab)
+            )
+            for n in ngram_orders if n > 2
+        }
 
     print("Loaded data...")
 
@@ -206,12 +210,12 @@ def worker(
                 tokens = next(val)["input_ids"].cuda()
                 logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
                 for n in ngram_orders:
-                    if n != 3:
+                    if n < 2:
                         ngram_dists = (
                             ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
                         )
                     else:
-                        ngram_dists = torch.tensor(pile_3_gram_dists[
+                        ngram_dists = torch.tensor(pile_n_gram_dists[n][
                             i * batch_size * seq_len :
                             (i + 1) * batch_size * seq_len
                         ], device="cuda")
@@ -264,6 +268,7 @@ def main(
     tokengrams_filename: str,
     div: bool,
     loss: bool,
+    overwrite: bool
 ):
     output_path.mkdir(exist_ok=True, parents=True)
 
@@ -294,8 +299,11 @@ def main(
         print("Collecting data for", model_name)
 
         current_df_path = output_path / f"ngram_{model_name}_{num_samples}.csv"
-        if current_df_path.exists():
-            current_df = pd.read_csv(current_df_path)
+        if not current_df_path.exists():
+            pd.DataFrame({"steps": steps}).to_csv(current_df_path)
+        current_df = pd.read_csv(current_df_path)
+
+        if not overwrite:
             missing_steps = get_missing_steps(current_df, ngram_orders, steps, loss, div)
             if not missing_steps:
                 continue
@@ -397,6 +405,10 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+    )
+    parser.add_argument(
         "--output_prefix",
         "-p",
         default="ngram",
@@ -455,5 +467,6 @@ if __name__ == "__main__":
         args.output_prefix,
         "document-10G",
         args.div,
-        args.loss
+        args.loss,
+        args.overwrite
     )

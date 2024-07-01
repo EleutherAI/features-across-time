@@ -198,7 +198,7 @@ def main(
         ngram_model = NgramSeqModel(
             bigrams_path, tokengrams_path, tokengrams_idx_path, 4, k
         )
-        print(f"Loaded {n}-gram model...")
+        
         # Check sampled sequences look correct
         print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
@@ -207,6 +207,7 @@ def main(
         # data_dict = {"input_ids": torch.tensor(data)}
         # Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
+        print(f"Generating {n}-gram logprobs...")
         pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
         ngram_model.generate_ngram_dists(pile_val, data_path, n)
 
@@ -221,7 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)
     # bpb_coeff = 0.4157027 # es 1 billion tokens
-    parser.add_argument("--bpb_coeff", default=0.3650388, type=float)  # pile
+    parser.add_argument("--bpb_coeff", default=0.3650388, type=float) # pile
     parser.add_argument(
         "--data_path",
         default="data/pile-deduped",

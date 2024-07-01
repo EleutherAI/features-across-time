@@ -63,10 +63,10 @@ class NgramModel:
             bigram_counts.sum(axis=1)[:, None] + np.finfo(np.float32).eps
         )
         self.bigram_probs = (
-            torch.tensor(self.bigram_probs).to_sparse().to_sparse_csr().to(self.device)
+            torch.from_numpy(self.bigram_probs).to_sparse().to_sparse_csr().to(self.device)
         )
 
-        self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).to(self.device)
+        self.unigram_probs = torch.from_numpy(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
         self.tokengrams = MemmapIndex(
             str(path / (tokengrams_filename + ".bin")), 
@@ -144,10 +144,10 @@ def worker(
     )
 
     if div:
-        pile_n_gram_dists = {
+        val_ngram_dists = {
             n: np.memmap(
-                str(ngram_path / f"{n}-gram-pile-dists.npy"),
-                dtype=np.float16, 
+                str(ngram_path / f"{n}-gram-pile-dists-32bit.npy"),
+                dtype=np.float32, 
                 mode='r+', 
                 shape=(num_samples * seq_len, d_vocab)
             )
@@ -215,11 +215,12 @@ def worker(
                             ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
                         )
                     else:
-                        ngram_dists = torch.tensor(pile_n_gram_dists[n][
-                            i * batch_size * seq_len :
-                            (i + 1) * batch_size * seq_len
-                        ], device="cuda")
-                        # ngram_dists = next(pile_3_gram_dists).cuda().flatten(0, 1)
+                        ngram_dists = torch.from_numpy(
+                            val_ngram_dists[n][
+                                i * batch_size * seq_len : 
+                                (i + 1) * batch_size * seq_len
+                            ]
+                        ).to(torch.bfloat16).cuda()
                     running_means[f"mean_{n}_gram_kl_div"] += (
                         kl_divergence_log_space(ngram_dists, logits).mean().item()
                         / num_iters
@@ -353,7 +354,7 @@ def main(
 
         for col in df.columns:
             current_df[col] = (
-                df[col].where(df[col].notna(), current_df[col])
+                df[col].combine_first(current_df[col])
                 if col in current_df
                 else df[col]
             )

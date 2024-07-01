@@ -126,9 +126,12 @@ class NgramSeqModel:
         print(n)
         eps = torch.finfo(torch.float16).eps
         data_loader = DataLoader(data, batch_size)
+
+        file_path = data_path / f"{n}-gram-pile-dists-16bit.npy"
+        mode = 'w+' if not file_path.exists() else 'r+'
         mmap = np.memmap(
-            data_path / f"{n}-gram-pile-dists.npy",
-            mode="w+",
+            file_path,
+            mode=mode,
             dtype=np.float16,
             shape=(len(data) * self.seq_len, vocab_size),
         )
@@ -177,16 +180,15 @@ def main(
     num_samples: int,
     bpb_coeff: float,
     tokens_path: Path,
-    bigrams_path: Path,
     tokengrams_path: Path,
     tokengrams_idx_path: Path,
     data_path: Path,
 ):
-    if 2 in ns and not os.path.exists(bigrams_path):
+    if 2 in ns and not os.path.exists(data_path / "bigrams.pkl"):
         print("Building bigrams...")
-        build_bigrams(tokens_path, bigrams_path)
+        build_bigrams(tokens_path, data_path / "bigrams.pkl")
 
-        with open(bigrams_path, "rb") as f:
+        with open(data_path / "bigrams.pkl", "rb") as f:
             arr = pickle.load(f)
             H = entropy(arr.sum(1))
             print("Unigram entropy: ", H, "Unigram entropy (bpb):", H * bpb_coeff)
@@ -196,7 +198,7 @@ def main(
     for n in ns:
         print(f"Loading {n}-gram model...")
         ngram_model = NgramSeqModel(
-            bigrams_path, tokengrams_path, tokengrams_idx_path, 4, k
+            data_path / "bigrams.pkl", tokengrams_path, tokengrams_idx_path, 4, k
         )
         print(f"Loaded {n}-gram model...")
         # Check sampled sequences look correct
@@ -226,7 +228,7 @@ if __name__ == "__main__":
         "--data_path",
         default="data/pile-deduped",
         type=str,
-        help="Path to write data",
+        help="Path to read and write data",
     )
     parser.add_argument(
         "--tokens_path",
@@ -234,12 +236,6 @@ if __name__ == "__main__":
         default="/mnt/ssd-1/pile_preshuffled/standard/document.bin",
         type=str,
         help="Path to u16 tokenized dataset",
-    )
-    parser.add_argument(
-        "--bigrams_path",
-        default="data/pile-deduped/bigrams.pkl",
-        type=str,
-        help="Path to dataset bigram table",
     )
     args = parser.parse_args()
 
@@ -252,7 +248,6 @@ if __name__ == "__main__":
         args.num_samples,
         args.bpb_coeff,
         Path(args.tokens_path),
-        Path(args.bigrams_path),
         tokengrams_path,
         tokengrams_index_path,
         Path(args.data_path),

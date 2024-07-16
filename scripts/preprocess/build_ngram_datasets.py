@@ -111,7 +111,8 @@ class NgramSeqModel:
             )
             print(
                 time.time() - start,
-                f"seconds to generate {num_samples} * {self.seq_len} tokens of order {n}",
+                f"seconds to generate {num_samples} * \
+{self.seq_len} tokens of order {n}",
             )
         return np.array(samples)
 
@@ -128,7 +129,7 @@ class NgramSeqModel:
         data_loader = DataLoader(data, batch_size)
 
         file_path = data_path / f"{n}-gram-pile-dists-16bit.npy"
-        mode = 'w+' if not file_path.exists() else 'r+'
+        mode = "w+" if not file_path.exists() else "r+"
         mmap = np.memmap(
             file_path,
             mode=mode,
@@ -200,7 +201,7 @@ def main(
         ngram_model = NgramSeqModel(
             data_path / "bigrams.pkl", tokengrams_path, tokengrams_idx_path, 4, k
         )
-        print(f"Loaded {n}-gram model...")
+
         # Check sampled sequences look correct
         print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
@@ -209,7 +210,10 @@ def main(
         # data_dict = {"input_ids": torch.tensor(data)}
         # Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
 
-        pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(range(num_samples))
+        print(f"Generating {n}-gram logprobs...")
+        pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(
+            range(num_samples)
+        )
         ngram_model.generate_ngram_dists(pile_val, data_path, n)
 
 
@@ -218,7 +222,11 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "--n", default=[3], nargs="+", type=int, help="N-gram models to sample from",
+        "--n",
+        default=[3],
+        nargs="+",
+        type=int,
+        help="N-gram models to sample from",
     )
     parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)

@@ -243,6 +243,31 @@ def worker(
                     running_means[f"mean_{n}_gram_smoothed_loss"] += (
                         mean_loss / num_iters
                     )
+            # if div:
+            #     tokens = next(val)["input_ids"].cuda()
+            #     logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
+            #     for n in ngram_orders:
+            #         if n < 2:
+                        # ngram_dists = (
+                        #     ngram_model.get_ngram_prob(
+                        #         tokens, n
+                        #     ).cuda().log().flatten(0, 1)
+                        # )
+            #         else:
+            #             ngram_dists = torch.from_numpy(
+            #                 val_ngram_dists[n][
+            #                     i * batch_size * seq_len :
+            #                     (i + 1) * batch_size * seq_len
+            #                 ]
+            #             ).to(torch.bfloat16).cuda()
+            #         running_means[f"mean_{n}_gram_kl_div"] += (
+            #             kl_divergence_log_space(ngram_dists, logits).mean().item()
+            #             / num_iters
+            #         )
+            #         running_means[f"mean_{n}_gram_js_div"] += (
+            #             js_divergence_log_space(ngram_dists, logits).mean().item()
+            #             / num_iters
+            #         )
 
             if div or smooth_div:
                 for n in ngram_orders:
@@ -265,13 +290,12 @@ def worker(
                         )
                         del ngram_dists
                     if smooth_div:
-                        if gpu_id == 7:
-                            ngram_dists = (
-                                ngram_model.get_smoothed_probs(tokens, n)
-                                .cuda()
-                                .log()
-                                .flatten(0, 1)
-                            )
+                        ngram_dists = (
+                            ngram_model.get_smoothed_probs(tokens, n)
+                            .cuda()
+                            .log()
+                            .flatten(0, 1)
+                        )
                         running_means[f"mean_smooth_{n}_gram_kl_div"] += (
                             kl_divergence_log_space(ngram_dists, logits).mean().item()
                             / num_iters

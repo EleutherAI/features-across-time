@@ -5,8 +5,6 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable
-import os
-import time
 
 import numpy as np
 import pandas as pd
@@ -63,17 +61,20 @@ class NgramModel:
             bigram_counts.sum(axis=1)[:, None] + np.finfo(np.float32).eps
         )
         self.bigram_probs = (
-            torch.from_numpy(self.bigram_probs).to_sparse().to_sparse_csr().to(self.device)
+            torch.from_numpy(self.bigram_probs)
+            .to_sparse()
+            .to_sparse_csr()
+            .to(self.device)
         )
 
         self.unigram_probs = torch.from_numpy(bigram_counts).sum(dim=1).to(self.device)
         self.unigram_probs /= self.unigram_probs.sum()
         self.tokengrams = MemmapIndex(
-            str(path / (tokengrams_filename + ".bin")), 
-            str(path / (tokengrams_filename + ".idx"))
+            str(path / (tokengrams_filename + ".bin")),
+            str(path / (tokengrams_filename + ".idx")),
         )
 
-    def get_bigram_prob(self, prev: Tensor) -> Tensor:
+    def get_bigram_probs(self, prev: Tensor) -> Tensor:
         starts = self.bigram_probs.crow_indices()[prev]
         ends = self.bigram_probs.crow_indices()[prev + 1]
 
@@ -87,25 +88,36 @@ class NgramModel:
             bigram_dists[i][filled_col_indices] = filled_col_values
         return bigram_dists
 
-    def get_ngram_prob(self, tokens: Tensor, n: int) -> Tensor:
+    def get_unsmoothed_probs(self, tokens: Tensor, n: int) -> Tensor:
         eps = torch.finfo(torch.float32).eps
 
         if n == 1:
             return self.unigram_probs.expand((*tokens.shape, -1)) + eps
         if n == 2:
-            return torch.stack([self.get_bigram_prob(row) for row in tokens]) + eps
+            return torch.stack([self.get_bigram_probs(row) for row in tokens]) + eps
 
+        # split into sequences of up to n - 1 tokens that end with each token
         ngram_prefixes = []
         for row in tokens:
-            # split into sequences of up to n - 1 tokens that end with each token
             ngram_prefixes.extend(
                 [row[max(0, i - (n - 1)) : i].tolist() for i in range(len(row))]
             )
-        # todo off by one extra vocab dimension error
         counts = torch.tensor(
             self.tokengrams.batch_count_next(ngram_prefixes, self.d_vocab),
-        )[:, :-1].reshape(-1, self.seq_len, self.d_vocab)
+        ).reshape(-1, self.seq_len, self.d_vocab)
         return counts / (counts.sum(dim=1, keepdim=True) + eps)
+
+    def get_smoothed_probs(self, tokens, n: int) -> Tensor:
+        ngram_prefixes = []
+        # split rows into sequences of up to n - 1 tokens that end with each token
+        for row in tokens:
+            ngram_prefixes.extend(
+                [row[max(0, i - (n - 1)) : i].tolist() for i in range(len(row))]
+            )
+
+        return torch.tensor(
+            self.tokengrams.batch_smoothed_probs(ngram_prefixes, self.d_vocab),
+        ).reshape(-1, self.seq_len, self.d_vocab)
 
 
 @torch.inference_mode()
@@ -122,7 +134,9 @@ def worker(
     val_path: Path,
     tokengrams_filename: str,
     div: bool,
-    loss: bool
+    loss: bool,
+    smooth_loss: bool,
+    smooth_div: bool,
 ) -> pd.DataFrame:
     print(f"Calculating loss? {loss}. Calculating divs? {div}")
     torch.cuda.set_device(gpu_id)
@@ -136,24 +150,28 @@ def worker(
             ds.set_format("torch", columns=["input_ids"])
             ngram_data[n] = DataLoader(ds, batch_size=batch_size)
 
-    if div:
+    smooth_ngram_data = {}
+    if smooth_loss:
+        for n in ngram_orders:
+            ds = load_from_disk(str(ngram_path / f"smoothed-{n}-gram-sequences.hf"))
+            ds.set_format("torch", columns=["input_ids"])
+            smooth_ngram_data[n] = DataLoader(ds, batch_size=batch_size)
+
+    if div or smooth_div:
         ngram_model = NgramModel(
-            ngram_path,
-            seq_len,
-            d_vocab,
-            tokengrams_filename,
-            "cuda"
+            ngram_path, seq_len, d_vocab, tokengrams_filename, "cuda"
         )
-        
-        val_ngram_dists = {
-            n: np.memmap(
-                str(ngram_path / f"{n}-gram-pile-dists-32bit.npy"),
-                dtype=np.float32, 
-                mode='r+', 
-                shape=(num_samples * seq_len, d_vocab)
-            )
-            for n in ngram_orders if n > 2
-        }
+
+    # if div:
+    #     val_ngram_dists = {
+    #         n: np.memmap(
+    #             str(ngram_path / f"{n}-gram-pile-dists-32bit.npy"),
+    #             dtype=np.float32,
+    #             mode='r+',
+    #             shape=(num_samples * seq_len, d_vocab)
+    #         )
+    #         for n in ngram_orders if n > 2
+    #     }
 
     print("Loaded data...")
 
@@ -169,9 +187,10 @@ def worker(
             try:
                 model = AutoModelForCausalLM.from_pretrained(
                     f"EleutherAI/{model_name}",
-                    torch_dtype="auto",
+                    torch_dtype=torch.float16,
                     revision=f"step{step}",
                     cache_dir=".cache",
+                    # quantization_config=BitsAndBytesConfig(load_in_4bit=True)
                 ).cuda()
                 success = True
                 break
@@ -184,9 +203,14 @@ def worker(
                     for n in ngram_orders:
                         if loss:
                             data[f"mean_{n}_gram_loss"].append(np.nan)
+                        if smooth_loss:
+                            data[f"mean_smooth_{n}_gram_loss"].append(np.nan)
                         if div:
                             data[f"mean_{n}_gram_kl_div"].append(np.nan)
                             data[f"mean_{n}_gram_js_div"].append(np.nan)
+                        if smooth_div:
+                            data[f"mean_smooth_{n}_gram_kl_div"].append(np.nan)
+                            data[f"mean_smooth_{n}_gram_js_div"].append(np.nan)
 
         if not success:
             continue
@@ -194,10 +218,11 @@ def worker(
         val = iter(val_ds)
         # pile_3_gram_dists = iter(dataloader_3_gram)
         ngram_iters = {n: iter(ds) for n, ds in ngram_data.items()}
+        smooth_ngram_iters = {n: iter(ds) for n, ds in smooth_ngram_data.items()}
         running_means = defaultdict(float)
         for i in range(num_iters):
-            if loss:
-                for n in ngram_orders:
+            for n in ngram_orders:
+                if loss:
                     tokens = next(ngram_iters[n])["input_ids"].cuda()
                     logits = model(tokens).logits[:, :, :d_vocab]
                     mean_loss = F.cross_entropy(
@@ -207,31 +232,63 @@ def worker(
                     ).item()
                     running_means[f"mean_{n}_gram_loss"] += mean_loss / num_iters
 
-            if div:
-                tokens = next(val)["input_ids"].cuda()
-                logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
-                for n in ngram_orders:
-                    if n < 2:
-                        ngram_dists = (
-                            ngram_model.get_ngram_prob(tokens, n).cuda().log().flatten(0, 1)
-                        )
-                    else:
-                        ngram_dists = torch.from_numpy(
-                            val_ngram_dists[n][
-                                i * batch_size * seq_len : 
-                                (i + 1) * batch_size * seq_len
-                            ]
-                        ).to(torch.bfloat16).cuda()
-                    running_means[f"mean_{n}_gram_kl_div"] += (
-                        kl_divergence_log_space(ngram_dists, logits).mean().item()
-                        / num_iters
-                    )
-                    running_means[f"mean_{n}_gram_js_div"] += (
-                        js_divergence_log_space(ngram_dists, logits).mean().item()
-                        / num_iters
+                if smooth_loss:
+                    tokens = next(smooth_ngram_iters[n])["input_ids"].cuda()
+                    logits = model(tokens).logits[:, :, :d_vocab]
+                    mean_loss = F.cross_entropy(
+                        logits[:, :-1].flatten(0, 1),
+                        tokens[:, 1:].flatten(0, 1),
+                        reduction="mean",
+                    ).item()
+                    running_means[f"mean_{n}_gram_smoothed_loss"] += (
+                        mean_loss / num_iters
                     )
 
+            if div or smooth_div:
+                for n in ngram_orders:
+                    tokens = next(val)["input_ids"].cuda()
+                    logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
+                    if div:
+                        ngram_dists = (
+                            ngram_model.get_unsmoothed_probs(tokens, n)
+                            .cuda()
+                            .log()
+                            .flatten(0, 1)
+                        )
+                        running_means[f"mean_{n}_gram_kl_div"] += (
+                            kl_divergence_log_space(ngram_dists, logits).mean().item()
+                            / num_iters
+                        )
+                        running_means[f"mean_{n}_gram_js_div"] += (
+                            js_divergence_log_space(ngram_dists, logits).mean().item()
+                            / num_iters
+                        )
+                        del ngram_dists
+                    if smooth_div:
+                        if gpu_id == 7:
+                            ngram_dists = (
+                                ngram_model.get_smoothed_probs(tokens, n)
+                                .cuda()
+                                .log()
+                                .flatten(0, 1)
+                            )
+                        running_means[f"mean_smooth_{n}_gram_kl_div"] += (
+                            kl_divergence_log_space(ngram_dists, logits).mean().item()
+                            / num_iters
+                        )
+                        running_means[f"mean_smooth_{n}_gram_js_div"] += (
+                            js_divergence_log_space(ngram_dists, logits).mean().item()
+                            / num_iters
+                        )
+                    # else:
+                    #     ngram_dists = torch.from_numpy(
+                    #         val_ngram_dists[n][
+                    #             i * batch_size * seq_len :
+                    #             (i + 1) * batch_size * seq_len
+                    #         ]
+                    #     ).to(torch.bfloat16).cuda()
             pbar.update(1)
+        print(running_means[f"mean_smooth_{n}_gram_kl_div"])
 
         for key in running_means.keys():
             data[key].append(running_means[key])
@@ -240,23 +297,50 @@ def worker(
     return {key: value for (key, value) in data.items()}
 
 
-def get_missing_steps(df: pd.DataFrame, ngram_orders: list[int], steps: list[int], loss: bool, div: bool) -> set[int]:
+def get_missing_steps(
+    df: pd.DataFrame,
+    ngram_orders: list[int],
+    steps: list[int],
+    loss: bool,
+    div: bool,
+    smooth_loss: bool,
+    smooth_div: bool,
+) -> set[int]:
     missing_steps = set()
     for ngram_order in ngram_orders:
         if loss:
-            if not f'mean_{ngram_order}_gram_loss' in df.columns:
+            if f"mean_{ngram_order}_gram_loss" not in df.columns:
                 missing_steps.update(steps)
-            elif f'mean_{ngram_order}_gram_loss' in df:
+            elif f"mean_{ngram_order}_gram_loss" in df:
                 missing_steps.update(
-                    df[df[f'mean_{ngram_order}_gram_loss'].isnull()]["step"].tolist()
+                    df[df[f"mean_{ngram_order}_gram_loss"].isnull()]["step"].tolist()
+                )
+        if smooth_loss:
+            if f"mean_{ngram_order}_gram_smoothed_loss" not in df.columns:
+                missing_steps.update(steps)
+            elif f"mean_{ngram_order}_gram_smoothed_loss" in df:
+                missing_steps.update(
+                    df[df[f"mean_{ngram_order}_gram_smoothed_loss"].isnull()][
+                        "step"
+                    ].tolist()
                 )
         if div:
-            if not f'mean_{ngram_order}_gram_kl_div' in df.columns:
+            if f"mean_{ngram_order}_gram_kl_div" not in df.columns:
                 missing_steps.update(steps)
-            elif f'mean_{ngram_order}_gram_kl_div' in df:
+            elif f"mean_{ngram_order}_gram_kl_div" in df:
                 missing_steps.update(
-                    df[df[f'mean_{ngram_order}_gram_kl_div'].isnull()]["step"].tolist()
+                    df[df[f"mean_{ngram_order}_gram_kl_div"].isnull()]["step"].tolist()
                 )
+        if smooth_div:
+            if f"mean_smooth_{ngram_order}_gram_kl_div" not in df.columns:
+                missing_steps.update(steps)
+            elif f"mean_smooth_{ngram_order}_gram_kl_div" in df:
+                missing_steps.update(
+                    df[df[f"mean_smooth_{ngram_order}_gram_kl_div"].isnull()][
+                        "step"
+                    ].tolist()
+                )
+
     return missing_steps
 
 
@@ -270,7 +354,9 @@ def main(
     tokengrams_filename: str,
     div: bool,
     loss: bool,
-    overwrite: bool
+    overwrite: bool,
+    smooth_loss: bool,
+    smooth_div: bool,
 ):
     output_path.mkdir(exist_ok=True, parents=True)
 
@@ -306,12 +392,14 @@ def main(
         current_df = pd.read_csv(current_df_path)
 
         if not overwrite:
-            missing_steps = get_missing_steps(current_df, ngram_orders, steps, loss, div)
+            missing_steps = get_missing_steps(
+                current_df, ngram_orders, steps, loss, div, smooth_loss, smooth_div
+            )
             if not missing_steps:
                 continue
 
             steps = [int(step) for step in list(missing_steps)]
-            
+
         # worker(
         #     0,
         #     steps,
@@ -325,7 +413,8 @@ def main(
         #     val_path,
         #     tokengrams_filename,
         #     div,
-        #     loss
+        #     loss,
+        #     smooth
         # )
         data = run_workers(
             worker,
@@ -341,29 +430,28 @@ def main(
             val_path=val_path,
             tokengrams_filename=tokengrams_filename,
             div=div,
-            loss=loss
+            loss=loss,
+            smooth_loss=smooth_loss,
+            smooth_div=smooth_div,
         )
         df = pd.concat([pd.DataFrame(d) for d in data])
 
         current_df.to_csv(
-            output_path /
-            'backup' /
-            f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
+            output_path
+            / "backup"
+            / f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
         )
-        df.set_index('step', inplace=True)
-        current_df.set_index('step', inplace=True)
+        df.set_index("step", inplace=True)
+        current_df.set_index("step", inplace=True)
 
         for col in df.columns:
             current_df[col] = (
-                df[col].combine_first(current_df[col])
-                if col in current_df
-                else df[col]
+                df[col].combine_first(current_df[col]) if col in current_df else df[col]
             )
-        
+
         current_df.reset_index(inplace=True)
         current_df.to_csv(
-            output_path
-            / f"{output_prefix}_{model_name}_{num_samples}.csv",
+            output_path / f"{output_prefix}_{model_name}_{num_samples}.csv",
             index=False,
         )
 
@@ -411,11 +499,15 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
-        "--output_prefix",
-        "-p",
-        default="ngram",
-        help="CSV name prefix",
-        type=str
+        "--smooth_loss",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--smooth_div",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--output_prefix", "-p", default="ngram", help="CSV name prefix", type=str
     )
     parser.add_argument(
         "--ngram_path",
@@ -470,5 +562,7 @@ if __name__ == "__main__":
         "document-10G",
         args.div,
         args.loss,
-        args.overwrite
+        args.overwrite,
+        args.smooth_loss,
+        args.smooth_div,
     )

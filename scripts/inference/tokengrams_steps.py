@@ -59,11 +59,13 @@ class NgramTokensDataset(Dataset):
         logprobs_path = data_path / f"{n}-gram-pile-dists-bf16-21_shards-logprobs.npy"
 
         if os.path.exists(tokens_path):
-            self.data = np.memmap(
-                str(tokens_path), dtype=np.uint16, mode="r+", shape=(num_tokens)
-            )
+            self.data = torch.from_numpy(
+                np.memmap(
+                    str(tokens_path), dtype=np.uint16, mode="r+", shape=(num_tokens)
+                ).copy()
+            ).long()
         elif os.path.exists(probs_path):
-            self.data = np.memmap(
+            data = np.memmap(
                 str(tokens_path), dtype=np.uint16, mode="w+", shape=(num_tokens)
             )
 
@@ -79,14 +81,15 @@ class NgramTokensDataset(Dataset):
                 ).copy()
                 ngram_probs[ngram_probs == 0] = 1e-6
 
-                self.data[seq_slice] = (
+                data[seq_slice] = (
                     torch.multinomial(torch.from_numpy(ngram_probs), 1)
                     .squeeze()
                     .to(torch.uint16)
                     .numpy()
                 )
+                self.data = torch.from_numpy(data.copy()).long()
         elif os.path.exists(logprobs_path):
-            self.data = np.memmap(
+            data = np.memmap(
                 str(tokens_path), dtype=np.uint16, mode="w+", shape=(num_tokens)
             )
 
@@ -105,12 +108,13 @@ class NgramTokensDataset(Dataset):
                 )
                 ngram_probs = np.exp(ngram_logprobs)
 
-                self.data[seq_slice] = (
+                data[seq_slice] = (
                     torch.multinomial(torch.from_numpy(ngram_probs), 1)
                     .squeeze()
                     .to(torch.uint16)
                     .numpy()
                 )
+                self.data = torch.from_numpy(data.copy()).long()
         else:
             raise ValueError(
                 f"Could not find tokens, probs, or logprobs for {n}-grams.\
@@ -118,10 +122,10 @@ class NgramTokensDataset(Dataset):
             )
 
     def __len__(self):
-        return len(self.data_bfloat16)
+        return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data_bfloat16[idx]
+        return self.data[idx]
 
     def float32_to_bfloat16(self, x):
         """Convert float32 to bfloat16 values represented as uint16."""
@@ -156,7 +160,7 @@ def worker(
     gpu_id: int,
     steps: list[int],
     model_name: str,
-    batch_size: str,
+    batch_size: int,
     num_samples: int,
     d_vocab: int,
     seq_len: int,
@@ -165,17 +169,21 @@ def worker(
     val_path: Path,
     div: bool,
     loss: bool,
-) -> pd.DataFrame:
+) -> dict[str, list[float]]:
     print(f"Calculating loss? {loss}. Calculating divs? {div}")
     torch.cuda.set_device(gpu_id)
 
     # Load input data
-    val_ds = DataLoader(load_from_disk(str(val_path)), batch_size=batch_size)
+    val_ds = DataLoader(
+        load_from_disk(str(val_path)), batch_size=batch_size  # type: ignore
+    )
     if div:
         val_ngram_dists = {
             n: DataLoader(
                 NgramDistDatasetBFloat16(
-                    str(ngram_path / f"{n}-gram-pile-dists-bf16-21_shards.npy"),
+                    str(
+                        ngram_path / f"{n}-gram-pile-dists-bf16-21_shards-logprobs.npy"
+                    ),
                     num_samples,
                     seq_len,
                     d_vocab,
@@ -238,6 +246,7 @@ def worker(
         for _ in range(num_iters):
             tokens = next(val)["input_ids"].cuda()
             logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
+            del tokens
 
             for n in ngram_orders:
                 if div:
@@ -335,17 +344,18 @@ def main(
             ("pythia-14m-warmup01", 8),
             ("pythia-70m-warmup01", 4),
         ]
-        + [(f"pythia-14m-seed{i}", 16) for i in range(1, 10)]
+        + [(f"pythia-14m-seed{i}", 8) for i in range(1, 10)]
         + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
-        + [(f"pythia-160m-seed{i}", 8) for i in range(1, 10)]
+        + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
         + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
     ):
         print("Collecting data for", model_name)
 
         current_df_path = output_path / f"ngram_{model_name}_{num_samples}.csv"
         if not current_df_path.exists():
-            pd.DataFrame({"steps": steps}).to_csv(current_df_path)
+            pd.DataFrame({"step": steps}).to_csv(current_df_path)
         current_df = pd.read_csv(current_df_path)
+        current_df.set_index("step", inplace=True, drop=False)
 
         if not overwrite:
             missing_steps = get_missing_steps(
@@ -356,7 +366,7 @@ def main(
 
             steps = [int(step) for step in list(missing_steps)]
 
-        debug = True
+        debug = False
         if debug:
             worker(
                 0,
@@ -380,7 +390,7 @@ def main(
                 model_name=model_name,
                 batch_size=batch_size,
                 num_samples=num_samples,
-                d_vocab=len(tokenizer.vocab),
+                d_vocab=len(tokenizer.vocab),  # type: ignore
                 seq_len=seq_len,
                 ngram_orders=ngram_orders,
                 ngram_path=ngram_path,
@@ -390,23 +400,23 @@ def main(
             )
         df = pd.concat([pd.DataFrame(d) for d in data])
 
+        os.makedirs(output_path / "backup", exist_ok=True)
         current_df.to_csv(
             output_path
             / "backup"
             / f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
         )
-        df.set_index("step", inplace=True)
-        current_df.set_index("step", inplace=True)
+        df.set_index("step", inplace=True, drop=False)
 
         for col in df.columns:
             current_df[col] = (
                 df[col].combine_first(current_df[col]) if col in current_df else df[col]
             )
 
-        current_df.reset_index(inplace=True)
+        if "step" not in current_df.columns:
+            current_df.reset_index(inplace=True)
         current_df.to_csv(
-            output_path / f"{output_prefix}_{model_name}_{num_samples}.csv",
-            index=False,
+            output_path / f"{output_prefix}_{model_name}_{num_samples}.csv", index=False
         )
 
 
@@ -426,7 +436,10 @@ def run_workers(worker: Callable, steps: list[int], **kwargs) -> list[dict]:
         )
         for i in range(len(step_indices))
     ]
-    print(f"Inference on steps {step_indices}, GPU count: {len(step_indices)}")
+    print(
+        f"Inference on steps {step_indices} for model {kwargs['model_name']}, \
+            GPU count: {len(step_indices)}"
+    )
     with mp.Pool(len(step_indices)) as pool:
         return pool.starmap(worker, args)
 

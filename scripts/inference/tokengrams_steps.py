@@ -4,7 +4,9 @@ import time
 from argparse import ArgumentParser
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Any
+import random
+from itertools import cycle
 
 import numpy as np
 import pandas as pd
@@ -23,8 +25,6 @@ from scripts.script_utils.divergences import (
 
 
 def set_seeds(seed=42):
-    import random
-
     random.seed(seed)  # unused
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -34,7 +34,7 @@ def set_seeds(seed=42):
 
 set_seeds()
 
-class NgramDistDatasetBFloat16(Dataset):
+class MemmapBFloat16Dataset(Dataset):
     def __init__(self, memmap_file, num_samples, seq_len, d_vocab):
         self.data = np.memmap(
             memmap_file,
@@ -51,74 +51,25 @@ class NgramDistDatasetBFloat16(Dataset):
 
 
 class NgramTokensDataset(Dataset):
-    def __init__(self, n, num_samples, seq_len, d_vocab):
-        num_tokens = num_samples * seq_len
+    def __init__(self, n, num_samples, seq_len):
+        if n == 2:
+            dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile.hf')
+            tokens = dataset['input_ids']
+            self.data = torch.from_numpy(np.stack(tokens)).long()
+        else:
+            data_path = Path("/mnt/ssd-1/lucia/ngrams-across-time/data")
+            tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards.npy"
+            if not tokens_path.exists():
+                raise ValueError(
+                    f"Could not find tokens, please use Tokengrams to generate"
+                )
 
-        data_path = Path("/mnt/ssd-1/lucia/ngrams-across-time/data")
-        tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards.npy"
-        counts_path = data_path / f"{n}-gram-autoregressive-counts-4-shards.npy"
-
-        if tokens_path.exists():
             self.data = torch.from_numpy(
                 np.memmap(
-                    str(tokens_path), dtype=np.int32, mode="r+", shape=(num_tokens)
+                    str(tokens_path), dtype=np.int32, mode="r+", shape=(num_samples, seq_len)
                 ).copy()
             ).long()
-            tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-            samples = "".join(tokenizer.batch_decode(self.data[:seq_len]))
-            print("for ", n, samples)
-        elif counts_path.exists():
-            tokens_data = np.memmap(
-                str(tokens_path), dtype=np.int32, mode="w+", shape=(num_tokens)
-            )
 
-            ngram_counts = np.memmap(
-                str(counts_path), dtype=np.int64, mode="r", shape=(num_tokens, d_vocab)
-            )
-            unigram_counts = torch.from_numpy(ngram_counts[0].copy()).float()
-            for i in tqdm(
-                range(num_samples), desc=f"Sampling {n}-gram tokens from counts"
-            ):  
-                seq_slice = slice(i * seq_len, (i + 1) * seq_len)
-                counts_torch = torch.from_numpy(ngram_counts[seq_slice].copy()).float()
-                if any(counts_torch.sum(dim=-1) <= 0):
-                    # Fall back to unigram counts if n-gram counts are all zero, equal to the first row of counts
-                    counts_torch[counts_torch.sum(dim=-1) <= 0] = unigram_counts
-
-                tokens_data[seq_slice] = (
-                    torch.multinomial(counts_torch, 1)
-                    .squeeze()
-                    .to(torch.int32)
-                    .numpy()
-                )
-                self.data = torch.from_numpy(tokens_data.copy()).long()
-        # elif logprobs_path.exists():
-        #     tokens_data = np.memmap(
-        #         str(tokens_path), dtype=np.int32, mode="w+", shape=(num_tokens)
-        #     )
-        #     ngram_logprobs = np.memmap(
-        #         str(logprobs_path),
-        #         dtype=np_bfloat16,
-        #         mode="r",
-        #         shape=(num_tokens, d_vocab),
-        #     )
-        #     for i in tqdm(
-        #         range(num_samples), desc=f"Sampling {n}-gram tokens from logprobs"
-        #     ):
-        #         seq_slice = slice(i * seq_len, (i + 1) * seq_len)
-        #         ngram_probs = np.exp(ngram_logprobs[seq_slice])
-        #         tokens_data[seq_slice] = (
-        #             torch.multinomial(torch.from_numpy(ngram_probs), 1)
-        #             .squeeze()
-        #             .to(torch.int32)
-        #             .numpy()
-        #         )
-                # self.data = torch.from_numpy(tokens_data.copy()).long()
-        else:
-            raise ValueError(
-                f"Could not find tokens, probs, or logprobs for {n}-grams.\
-                please use Tokengrams to generate"
-            )
 
     def __len__(self):
         return len(self.data)
@@ -129,6 +80,63 @@ class NgramTokensDataset(Dataset):
 
 def collate_np(batch):
     return torch.from_numpy(np.stack(batch))
+
+
+class MultiDatasetLoader:
+    def __init__(self, datasets):
+        self.datasets = datasets
+        self.iterators = {name: iter(dataloader) for name, dataloader in datasets.items()}
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return {name: next(iterator) for name, iterator in self.iterators.items()}
+        except StopIteration:
+            self.iterators = {name: iter(dataloader) for name, dataloader in self.datasets.items()}
+            raise StopIteration
+
+
+def create_dataloaders(
+        val_path: Path,
+        ngram_path: Path,
+        ngram_orders: list[int], 
+        num_samples: int, 
+        seq_len: int, 
+        batch_size: int, 
+        d_vocab: int, 
+        div=True, 
+        loss=True
+    ) -> MultiDatasetLoader:
+    dataloaders: dict[str, Any] = {}
+
+    dataloaders['val'] = DataLoader(
+        load_from_disk(str(val_path)).select(range(num_samples)), batch_size=batch_size  # type: ignore
+    )
+    
+    if div:
+        div_loaders = {
+            f'ngram_logprobs_{n}': DataLoader(
+                MemmapBFloat16Dataset(
+                    str(ngram_path / f"{n}-gram-pile-logprobs-21_shards-bfloat16.npy"),
+                    num_samples, seq_len, d_vocab),
+                batch_size=batch_size * seq_len, # TODO check this
+                collate_fn=collate_np,
+            ) for n in ngram_orders
+        }
+        dataloaders.update(div_loaders)
+    
+    if loss:
+        dataloaders.update({
+            f'ngram_tokens_{n}': DataLoader(
+                NgramTokensDataset(n, num_samples, seq_len),
+                batch_size=batch_size,
+            ) for n in ngram_orders
+        })
+    
+    return MultiDatasetLoader(dataloaders)
+
 
 
 @torch.inference_mode()
@@ -148,44 +156,29 @@ def worker(
 ) -> dict[str, list[float]]:
     print(f"Calculating loss? {loss}. Calculating divs? {div}")
     torch.cuda.set_device(gpu_id)
-    val_ngram_dists, val_ngram_tokens = {}, {}
-
-    # Load input data
-    val_ds = DataLoader(
-        load_from_disk(str(val_path)), batch_size=batch_size  # type: ignore
+    
+    multi_loader = create_dataloaders(
+        val_path,
+        ngram_path,
+        ngram_orders, 
+        num_samples, 
+        seq_len, 
+        batch_size, 
+        d_vocab, 
+        div, 
+        loss
     )
-    if div:
-        val_ngram_dists = {
-            n: DataLoader(
-                NgramDistDatasetBFloat16(
-                    str(
-                        ngram_path / f"{n}-gram-pile-logprobs-21_shards-bfloat16.npy"
-                    ),
-                    num_samples,
-                    seq_len,
-                    d_vocab,
-                ),
-                collate_fn=collate_np,
-                batch_size=batch_size * seq_len,
-            )
-            for n in ngram_orders
-        }
-    if loss:
-        print("Loading or generating ngram tokens...")
-        val_ngram_tokens = {
-            n: DataLoader(
-                NgramTokensDataset(n, num_samples, seq_len, d_vocab),
-                batch_size=batch_size * seq_len,
-            )
-            for n in ngram_orders
-        }
+    cycled_loader = cycle(multi_loader)
     print("Loaded data...")
 
-    # Collect inference data
+    # Do inference
     data = defaultdict(list)
     data["step"] = steps
 
     num_iters = math.ceil(num_samples / batch_size)
+    for name, dataloader in multi_loader.datasets.items():
+        assert len(dataloader) == num_iters, f"Dataloader '{name}' has {len(dataloader)} batches, expected {num_iters}"
+
     pbar = tqdm(total=len(steps) * num_iters, position=gpu_id)
     for step in steps:
         success = False
@@ -209,30 +202,25 @@ def worker(
                     for n in ngram_orders:
                         if loss:
                             data[f"mean_{n}_gram_loss"].append(np.nan)
+                            data[f"mean_{n}_gram_accuracy"].append(np.nan)
                         if div:
                             data[f"mean_{n}_gram_kl_div"].append(np.nan)
                             data[f"mean_{n}_gram_js_div"].append(np.nan)
         if not success:
             continue
 
-        val = iter(val_ds)
-        ngram_dist_iters = {}
-        ngram_token_iters = {}
-        if div:
-            # Use a cleaner dataloader setup
-            ngram_dist_iters = {n: iter(val_ngram_dists[n]) for n in ngram_orders}
-        if loss:
-            ngram_token_iters = {n: iter(val_ngram_tokens[n]) for n in ngram_orders}
-
         running_means = defaultdict(float)
+
         for _ in range(num_iters):
-            tokens = next(val)["input_ids"].cuda()
+            batch = next(cycled_loader)
+
+            tokens = batch['val']['input_ids'].cuda()
             logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
             del tokens
 
             for n in ngram_orders:
-                if div:
-                    ngram_logprobs = next(ngram_dist_iters[n]).cuda()
+                if f'ngram_logprobs_{n}' in batch:
+                    ngram_logprobs = batch[f'ngram_logprobs_{n}'].cuda()
                     running_means[f"mean_{n}_gram_kl_div"] += (
                         kl_divergence_from_logits(ngram_logprobs, logits).mean().item()
                         / num_iters
@@ -243,25 +231,25 @@ def worker(
                     )
                     del ngram_logprobs
 
-                if loss:
-                    # Loss on maximum entropy n-gram tokens
-                    ngram_tokens = (
-                        next(ngram_token_iters[n]).cuda().reshape(batch_size, seq_len)
-                    )
-                    print(ngram_tokens[0, :10])
+                if f'ngram_tokens_{n}' in batch:
+                    ngram_tokens = batch[f'ngram_tokens_{n}'].cuda()
                     logits = model(ngram_tokens).logits[:, :, :d_vocab]
                     mean_loss: float = F.cross_entropy(
-                        logits[:-1].flatten(0, 1),
-                        ngram_tokens[1:].flatten(0, 1),
+                        logits[:, :-1].flatten(0, 1),
+                        ngram_tokens[:, 1:].flatten(0, 1),
                         reduction="mean",
                     ).item()
                     running_means[f"mean_{n}_gram_loss"] += mean_loss / num_iters
+                    mean_accuracy = (logits.argmax(-1)[:, :-1] == ngram_tokens[:, 1:]).float().mean().item()
+                    running_means[f"mean_{n}_gram_accuracy"] += (
+                        mean_accuracy / num_iters
+                    )
 
             pbar.update(1)
-
         print(running_means[f"mean_{n}_gram_kl_div"])
         print(running_means[f"mean_{n}_gram_js_div"])
         print(running_means[f"mean_{n}_gram_loss"])
+        print(running_means[f"mean_{n}_gram_accuracy"])
 
         for key in running_means.keys():
             data[key].append(running_means[key])
@@ -385,14 +373,13 @@ def main(
             )
         df = pd.concat([pd.DataFrame(d) for d in data])
 
-        os.makedirs(output_path / "backup", exist_ok=True)
+        (output_path / "backup").mkdir(exist_ok=True)
         current_df.to_csv(
             output_path
             / "backup"
             / f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
-        )
+        )  
         df.set_index("step", inplace=True, drop=False)
-
         for col in df.columns:
             current_df[col] = (
                 df[col].combine_first(current_df[col]) if col in current_df else df[col]

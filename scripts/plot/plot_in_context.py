@@ -21,79 +21,64 @@ def main(
     images_path: Path,
     data_path: Path,
     num_samples: int,
-    bpb_coefficient: float
+    bpb_coefficient: float,
+    ngram_orders = [2, 3, 4],
 ):
     kaleido_workaround()
-    images_path.mkdirs(exist_ok=True, parents=True)
+    images_path.mkdir(exist_ok=True, parents=True)
 
-    df = pd.read_csv(data_path / f"{model_name}_{num_samples}_steps.csv")
-
-    df["step"] = pd.to_numeric(df["step"], errors="coerce").fillna(0).astype(int)
+    df = pd.read_csv(data_path / f"context_{model_name}_{num_samples}.csv")
 
     # Remove several steps because their lines' confidence intervals overlap
-    df = df[df["step"] != 0]
-    df = df[df["step"] != 2]
-    df = df[df["step"] != 8]
-    df = df[df["step"] != 32]
-    df = df[df["step"] != 128]
-    df = df[df["step"] != 512]
-    df = df[df["step"] != 2048]
-    df = df[df["step"] != 8000]
-    df = df[df["step"] != 20_000]
-    df = df[df["step"] != 80_000]
-    df = df[df["step"] != 320_000]
-
-    # Make index 1-indexed
-    df["index"] = df["index"] + 1
+    steps_to_remove = [0, 1, 2, 4, 8, 32, 64, 128, 512, 2000, 2048, 5_000, 16_000, 20_000, 33_000, 80_000, 131_000]
+    df = df[~df["step"].isin(steps_to_remove)]
 
     # Filter to log spaced samples
-    max_index = df["index"].max()
+    max_index = df["token"].max()
     log_spaced_indices = np.unique(
         np.logspace(
             0, np.log2(max_index), num=int(np.log2(max_index)) + 1, base=2
         ).astype(int)
     )
-    df = df[df["index"].isin(log_spaced_indices)]
+    df = df[df["token"].isin(log_spaced_indices)]
 
     step_order = sorted(df["step"].unique())
 
     fig = make_subplots(
         rows=1,
-        cols=1,
+        cols=len(ngram_orders),
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            "Trigram loss over sequence positions (Pythia 12B)",
-            # "Unigram loss over sequence positions",
-            # "Bigram loss over sequence positions",
+            f"{n}-gram"
+            for n in ngram_orders
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.05,
     )
 
-    for idx, ngram in enumerate(["1-gram", "2-gram"]):  # "3-gram"
-        df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
-            lambda x: get_confidence_intervals(x, num_samples)[0]
+    for idx, ngram in enumerate([str(order) for order in ngram_orders], start = 1):
+        df[f"bottom_conf_{ngram}_loss"] = df[f"mean_{ngram}_per_token_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[0] # type: ignore
         )
-        df[f"top_conf_{ngram}_loss"] = df[f"mean_{ngram}_loss"].map(
-            lambda x: get_confidence_intervals(x, num_samples)[1]
-        )
+        df[f"top_conf_{ngram}_loss"] = df[f"mean_{ngram}_per_token_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[1] # type: ignore
+        ) 
 
-        df[f"mean_{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
+        df[f"mean_{ngram}_per_token_loss_bpb"] = df[f"mean_{ngram}_per_token_loss"] * bpb_coefficient
         df[f"bottom_conf_{ngram}_bpb"] = (
             df[f"bottom_conf_{ngram}_loss"] * bpb_coefficient
         )
         df[f"top_conf_{ngram}_bpb"] = df[f"top_conf_{ngram}_loss"] * bpb_coefficient
 
-        # For some reason the legend items are listed in reverse order
         for i, step in enumerate(reversed(step_order)):
             group_df = df[df["step"] == step]
-            color = px.colors.sequential.Plasma_r[i]
+            color = px.colors.sequential.Plasma_r[(i + 1) % len(px.colors.sequential.Plasma_r)]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
             fig.add_trace(
                 go.Scatter(
-                    x=group_df["index"],
+                    x=group_df["token"],
                     y=group_df[f"top_conf_{ngram}_bpb"],
                     fill=None,
                     mode="lines",
@@ -102,11 +87,11 @@ def main(
                     hoverinfo="skip",
                 ),
                 row=1,
-                col=idx + 1,
+                col=idx,
             )
             fig.add_trace(
                 go.Scatter(
-                    x=group_df["index"],
+                    x=group_df["token"],
                     y=group_df[f"bottom_conf_{ngram}_bpb"],
                     mode="lines",
                     line=dict(width=0),
@@ -116,43 +101,43 @@ def main(
                     hoverinfo="skip",
                 ),
                 row=1,
-                col=idx + 1,
+                col=idx,
             )
             fig.add_trace(
                 go.Scatter(
-                    x=group_df["index"],
-                    y=group_df[f"mean_{ngram}_bpb"],
+                    x=group_df["token"],
+                    y=group_df[f"mean_{ngram}_per_token_loss_bpb"],
                     mode="lines+markers",
                     marker=dict(size=5, symbol=marker_series[i]),
                     name=f"{step:,}",
                     line=dict(color=color),
-                    showlegend=idx == 0,
+                    showlegend=idx == 1,
                 ),
                 row=1,
-                col=idx + 1,
+                col=idx,
             )
 
     fig.update_layout(
-        width=600,
+        width=1200,
         height=400,
         legend=dict(
             x=0.98,
-            y=0.6,
+            y=0.65,
             xanchor="right",
             yanchor="middle",
-            font=dict(size=8),
+            font=dict(size=11),
             title="Step",
             bgcolor="rgba(255, 255, 255, 0.5)",
         ),
         margin=dict(l=20, r=20, t=50, b=60),
     )
 
-    tick_values, tick_texts = base_2_log_ticks(df["index"])
+    tick_values, tick_texts = base_2_log_ticks(df["token"], spacing=2)
     fig.update_xaxes(
         title_text="", type="log", tickvals=tick_values, ticktext=tick_texts
     )
     fig.update_yaxes(
-        title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1
+        title_text="Loss", title_font=dict(size=16), title_standoff=10, row=1, col=1
     )
     fig.add_annotation(
         dict(
@@ -162,11 +147,11 @@ def main(
             x=0.5,
             y=-0.2,
             showarrow=False,
-            font=dict(size=14),
+            font=dict(size=18),
         )
     )
     fig.write_image(
-        images_path / f"in-context-EleutherAI--{model_name}.pdf", format="pdf"
+        images_path / f"in-context-{model_name}.pdf", format="pdf"
     )
 
 
@@ -174,24 +159,16 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data_path", type=str, default="output")
     parser.add_argument("--images_path", type=str, default="images")
-    parser.add_argument("--num_samples", type=int, default=1024)
+    parser.add_argument("--num_samples", type=int, default=4096)
+    parser.add_argument("--n", type=int, nargs="+", default=[1, 2, 3, 4])
+    parser.add_argument("--model_name", type=str, default="pythia-12b")
     args = parser.parse_args()
 
-    for model_name, batch_size in [
-        # ("pythia-14m", 4),
-        # ("pythia-70m", 4),
-        # ("pythia-160m", 4),
-        # ("pythia-410m", 4),
-        # ("pythia-1b", 4),
-        # ("pythia-1.4b", 4),
-        # ("pythia-2.8b", 4),
-        # ("pythia-6.9b", 1),
-        ("pythia-12b", 1),
-    ]:
-        main(
-            model_name, 
-            Path(args.images_path), 
-            Path(args.data_path), 
-            args.num_samples,
-            bpb_coefficient=0.3650388
-        )
+    main(
+        args.model_name, 
+        Path(args.images_path), 
+        Path(args.data_path), 
+        args.num_samples,
+        bpb_coefficient=0.3650388,
+        ngram_orders=args.n
+    )

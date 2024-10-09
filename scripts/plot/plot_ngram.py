@@ -2,6 +2,10 @@ import tempfile
 import time
 from argparse import ArgumentParser
 from pathlib import Path
+import math
+import glob
+import os
+from turtle import title
 
 import numpy as np
 import pandas as pd
@@ -26,7 +30,7 @@ def base_2_log_ticks(values, spacing=1):
     return ticks, labels
 
 
-def hex_to_rgba(hex_color: str, opacity=0.5):
+def hex_to_rgba(hex_color: str, opacity: float = 0.5):
     r = int(hex_color[1:3], 16)
     g = int(hex_color[3:5], 16)
     b = int(hex_color[5:7], 16)
@@ -38,6 +42,22 @@ def get_confidence_intervals(
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     sem = np.sqrt(mean / num_items)
     return stats.norm.interval(confidence, loc=mean, scale=sem)
+
+
+def get_model_size(model_name: str) -> int:
+    """Convert a size string to a float value in millions."""
+    if 'warmup' in model_name:
+        size_str = model_name.split('-')[-2].lower()
+    else:
+        size_str = model_name.split('-')[-1].lower()
+    numeric_part = ''.join(c for c in size_str if c.isdigit() or c == '.')
+
+    if size_str.endswith('m'):
+        return float(numeric_part) * 1e6
+    elif size_str.endswith('b'):
+        return float(numeric_part) * 1e9
+    else:
+        raise ValueError(f"Invalid model name format: {model_name}")
 
 
 # Ideally all trend lines will use a different marker for accessibility
@@ -59,113 +79,147 @@ marker_series = [
 ]
 
 
+def get_legend_name(filename):
+    return os.path.basename(filename).split('_')[-2]
+
+
+def load_dfs(data_path: Path):
+    csv_files = [
+        x for x in glob.glob(str(data_path) + '/*.csv')
+        if not 'seed' in x and not 'warmup' in x and not 'es' in x
+    ]
+
+    dfs = []
+    for file in csv_files:
+        df = pd.read_csv(file)
+        legend_name = get_legend_name(file)
+        model_size = int(get_model_size(legend_name))
+        df['legend'] = legend_name
+        df['model_size'] = model_size
+        dfs.append(df)
+
+    df = pd.concat(dfs, ignore_index=True)
+    return df.sort_values(['model_size', 'step'], ascending=True)
+
+
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="old-bigrams")
+    parser.add_argument("--name", type=str, default="ngram-combined")
+    parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", type=int, default=1024)
+    parser.add_argument("--ngram_orders", "-n", nargs="+", type=int, default=[1, 2, 3, 4])
+    parser.add_argument("--data", "-d", type=str, default="pile")
+    return parser.parse_args()
+
+
 def main(
     data_path: Path,
     images_path: Path,
     bpb_coefficient: float,
-    ngram_bpb_entropies: list[float],
+    bpb_entropies: list[float],
     num_samples: int,
     ngram_orders: list[int],
     name: str,
-    model_metadata: list[tuple[str, str]],
-    model_series = "Pythia",
 ):
-    images_path.mkdir(exist_ok=True, parents=True)
-    dfs = []
-    for model_name, pretty_model_name in model_metadata:
-        model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
-        model_df["model_name"] = model_name
-        model_df["pretty_model_name"] = pretty_model_name
-        dfs.append(model_df)
-    df = pd.concat(dfs)
-
     kaleido_workaround()
-    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
+    images_path.mkdir(exist_ok=True, parents=True)
+
+    df = load_dfs(data_path)
+
     fig = make_subplots(
         rows=2,
         cols=len(ngram_orders),
         shared_xaxes=True,
         shared_yaxes=True,
         subplot_titles=[
-            f"{i}-gram sequence loss across time" for i in ngram_orders
+            f"{i}-gram loss" for i in ngram_orders
         ] + [
-            f"D<sub>KL</sub>({i}-gram model || {model_series}) across time"
+            f"D<sub>KL</sub>({i}-gram model || Pythia)"
             for i in ngram_orders
         ],
         horizontal_spacing=0.02,
         vertical_spacing=0.1,
     )
+    fig.update_layout(
+        title_text="Sequences across time",
+        title_x=0.5,
+        title_y=1.,
+    )
 
-    for idx, ngram in enumerate([f"{i}_gram" for i in ngram_orders]):
-        df[f"{ngram}_loss_bottom_conf"] = df[f"mean_{ngram}_loss"].map(
-            lambda x: get_confidence_intervals(x, num_samples)[0]
+    for col, order in enumerate([f"{n}_gram" for n in ngram_orders], start=1):
+        df[f"{order}_loss_bottom_conf"] = df[f"mean_{order}_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[0] # type: ignore
         )
-        df[f"{ngram}_loss_top_conf"] = df[f"mean_{ngram}_loss"].map(
-            lambda x: get_confidence_intervals(x, num_samples)[1]
+        df[f"{order}_loss_top_conf"] = df[f"mean_{order}_loss"].map(
+            lambda x: get_confidence_intervals(x, num_samples)[1] # type: ignore
         )
 
-        df[f"{ngram}_bpb"] = df[f"mean_{ngram}_loss"] * bpb_coefficient
-        df[f"{ngram}_bpb_bottom_conf"] = (
-            df[f"{ngram}_loss_bottom_conf"] * bpb_coefficient
+        df[f"{order}_bpb"] = df[f"mean_{order}_loss"] * bpb_coefficient
+        df[f"{order}_bpb_bottom_conf"] = (
+            df[f"{order}_loss_bottom_conf"] * bpb_coefficient
         )
-        df[f"{ngram}_bpb_top_conf"] = df[f"{ngram}_loss_top_conf"] * bpb_coefficient
+        df[f"{order}_bpb_top_conf"] = df[f"{order}_loss_top_conf"] * bpb_coefficient
 
-        for i, model in enumerate(df["pretty_model_name"].unique()):
-            df_model = df[df["pretty_model_name"] == model]
-            color = px.colors.sequential.Plasma_r[i]
+        for i, model in enumerate(df["legend"].unique()):
+            df_model = df[df["legend"] == model]
+            color = px.colors.sequential.Plasma_r[i % len(px.colors.sequential.Plasma_r)]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"{ngram}_bpb_top_conf"],
+                    y=df_model[f"{order}_bpb_top_conf"],
                     fill=None,
                     mode="lines",
                     line=dict(width=0),
+                    legendgroup=f"{i}",
                     showlegend=False,
                     hoverinfo="skip",
                 ),
                 row=1,
-                col=idx + 1,
+                col=col,
             )
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"{ngram}_bpb_bottom_conf"],
+                    y=df_model[f"{order}_bpb_bottom_conf"],
                     mode="lines",
                     line=dict(width=0),
                     fill="tonexty",
                     fillcolor=transparent_color,
+                    legendgroup=f"{i}",
                     showlegend=False,
                     hoverinfo="skip",
                 ),
                 row=1,
-                col=idx + 1,
+                col=col,
             )
             fig.add_trace(
                 go.Scatter(
                     x=df_model["step"],
-                    y=df_model[f"{ngram}_bpb"],
+                    y=df_model[f"{order}_bpb"],
                     mode="lines+markers",
                     marker=dict(size=5, symbol=marker_series[i]),
                     name=model,
                     line=dict(color=color),
-                    showlegend=idx == 1,
+                    legendgroup=f"{i}",
+                    showlegend=col==1,
                 ),
                 row=1,
-                col=idx + 1,
+                col=col,
             )
 
-        if idx < 2:
+        if col < 3:
             fig.add_shape(
                 type="line",
                 x0=1,
-                y0=ngram_bpb_entropies[idx],
-                x1=143000,
-                y1=ngram_bpb_entropies[idx],
+                y0=bpb_entropies[col - 1],
+                x1=143_000,
+                y1=bpb_entropies[col- 1],
                 line=dict(color="black", width=2, dash="dot"),
                 row=1,
-                col=idx + 1,
+                col=col,
             )
 
     # df column name, y range, row, col
@@ -175,7 +229,7 @@ def main(
     ]
     row = 2
 
-    for col_idx, label in enumerate(div_metadata):
+    for col, label in enumerate(div_metadata, start=1):
         df[f"top_conf_{label}"] = df[f"mean_{label}"].map(
             lambda x: get_confidence_intervals(x, num_samples)[0]
         )
@@ -187,9 +241,9 @@ def main(
         df[f"bottom_conf_{label}_bpb"] = df[f"bottom_conf_{label}"] * bpb_coefficient
         df[f"mean_{label}_bpb"] = df[f"mean_{label}"] * bpb_coefficient
 
-        for i, model in enumerate(df["pretty_model_name"].unique()):
-            df_model = df[df["pretty_model_name"] == model]
-            color = px.colors.sequential.Plasma_r[i]
+        for i, model in enumerate(df["legend"].unique()):
+            df_model = df[df["legend"] == model]
+            color = px.colors.sequential.Plasma_r[i % len(px.colors.sequential.Plasma_r)]
             transparent_color = hex_to_rgba(color, opacity=0.17)
 
             fig.add_trace(
@@ -203,7 +257,7 @@ def main(
                     hoverinfo="skip",
                 ),
                 row=row,
-                col=col_idx + 1,
+                col=col,
             )
             fig.add_trace(
                 go.Scatter(
@@ -217,7 +271,7 @@ def main(
                     hoverinfo="skip",
                 ),
                 row=row,
-                col=col_idx + 1,
+                col=col,
             )
             fig.add_trace(
                 go.Scatter(
@@ -230,7 +284,7 @@ def main(
                     showlegend=False,
                 ),
                 row=row,
-                col=col_idx + 1,
+                col=col,
             )
     fig.update_layout(
         width=1800,
@@ -241,73 +295,46 @@ def main(
             y=0.98,
             xanchor="right",
             yanchor="top",
-            font=dict(size=8),
+            font=dict(size=11),
             bgcolor="rgba(255, 255, 255, 0.85)",
         ),
         margin=dict(l=20, r=20, t=50, b=80),
     )
+
+    tick_values, tick_texts = base_2_log_ticks(df["step"], spacing=2)
 
     fig.update_xaxes(
         title_text="", type="log", tickvals=tick_values, ticktext=tick_texts
     )
 
     fig.update_yaxes(
-        title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1
+        title_text="Loss", title_font=dict(size=16), title_standoff=10, row=1, col=1
     )
-    # fig.update_yaxes(range=[1, 5], row=1, col=1)
-    # fig.update_yaxes(range=[0, 4.5], row=2, col=1)
     fig.update_yaxes(
         title_text="KL divergence",
-        title_font=dict(size=12),
+        title_font=dict(size=16),
         title_standoff=10,
         row=2,
         col=1,
     )
-    # Add a shared, centered x-axis label
     fig.add_annotation(
         dict(
-            text="Training step",
+            text="Training steps",
             xref="paper",
             yref="paper",
             x=0.5,
             y=-0.1,
             showarrow=False,
-            font=dict(size=14),
+            font=dict(size=18),
         )
     )
 
+    fig.show()
     fig.write_image(images_path / f"{name}.pdf", format="pdf")
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="output")
-    parser.add_argument("--name", type=str, default="ngram-combined")
-    parser.add_argument("--images_path", type=str, default="images")
-    parser.add_argument("--num_samples", type=int, default=1024)
-    parser.add_argument("--ngram_orders", "-n", nargs="+", type=int, default=[1, 2, 3, 4])
-    parser.add_argument("--data", "-d", type=str, default="pile")
-    args = parser.parse_args()
-
-    # model_metadata = [
-    #     (f'es_pythia-160m', "160M")
-    # ]
-    model_metadata = [
-        ("pythia-14m", "14M"),
-        ("pythia-70m", "70M"),
-        ("pythia-160m", "160M"),
-        ("pythia-410m", "410M"),
-        ("pythia-1b", "1B"),
-        ("pythia-1.4b", "1.4B"),
-        ("pythia-2.8b", "2.8B"),
-        ("pythia-6.9b", "6.9B"),
-        ("pythia-12b", "12B"),
-    ]
-    # model_metadata = [
-    #     (f'es_{model_name}', pretty_name)
-    #     for model_name, pretty_name in model_metadata
-    # ]
-
+    args = parse_args()
     data_args = {
         "pile": dict(
             bpb_coefficient=0.3650388,
@@ -326,6 +353,5 @@ if __name__ == "__main__":
         data_args[args.data]["bpb_entropies"],
         args.num_samples,
         args.ngram_orders,
-        args.name,
-        model_metadata
+        args.name
     )

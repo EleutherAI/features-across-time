@@ -8,9 +8,10 @@ import numpy as np
 import pandas as pd
 import safetensors
 import torch
-import torchvision.transforms.functional as TF
+import torchvision.transforms.v2.functional as TF
+# import torchvision.transforms.functional as TF
 from concept_erasure import QuadraticFitter
-from concept_erasure.quantile import QuantileNormalizer
+# from concept_erasure import QuantileNormalizer
 from concept_erasure.utils import assert_type
 from datasets import (
     ClassLabel,
@@ -64,7 +65,7 @@ def to_grayscale(ex):
 
 
 def run_dataset(
-    dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: str
+    dataset_str: str, nets: list[str], seed: int, models_path: str, data_path: Path
 ):
     # Seed everything
     np.random.seed(seed)
@@ -72,7 +73,7 @@ def run_dataset(
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-    data_path.mkdirs(exist_ok=True, parents=True)
+    data_path.mkdir(exist_ok=True, parents=True)
 
     path, _, name = dataset_str.partition(":")
     ds = load_dataset(path, name or None)
@@ -92,7 +93,7 @@ def run_dataset(
 
     print("Computing statistics...")
     fitter = QuadraticFitter.fit(X.flatten(1), Y)
-    normalizer = QuantileNormalizer(X, Y)
+    # normalizer = QuantileNormalizer(X, Y)
     print("Done.")
 
     def preprocess(ex):
@@ -132,34 +133,34 @@ def run_dataset(
     dataset_file_str = dataset_str.replace("/", "--")
     truncated_normal = load_from_disk(
         str(data_path / f"truncated-normal-{dataset_file_str}.hf")
-    ).select(range(len(val)))
+    ).select(range(len(val))) # type: ignore
 
     ds_variations = {
-        "maxent": load_from_disk(data_path / f"dury-{dataset_file_str}.hf"),
-        "shifted": load_from_disk(data_path / f"shifted-{dataset_file_str}.hf"),
-        "truncated_normal": truncated_normal,
-        "real": val,
-        "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
-        "got": ConceptEditedDataset(class_probs, editor, X, Y),
+        # "maxent": load_from_disk(data_path / f"dury-{dataset_file_str}.hf"),
+        # "shifted": load_from_disk(data_path / f"shifted-{dataset_file_str}.hf"),
+        # "truncated_normal": truncated_normal,
+        # "real": val,
+        # "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
+        # "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "third_order": load_from_disk(
             str(data_path / f"third-order-{dataset_file_str}.hf")
         ),
-        "gaussian": gaussian,
-        "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
+        # "gaussian": gaussian,
+        # "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
 
     for ds_name in [
         "third_order",
-        "maxent",
-        "shifted",
-        "real",
-        "truncated_normal",
+        # "maxent",
+        # "shifted",
+        # "real",
+        # "truncated_normal",
     ]:
         ds_variations[ds_name].set_format("torch", columns=["pixel_values", label_col])
 
-    if dataset_str == "mnist" or dataset_str == "fashion_mnist":
-        for ds_name in ["maxent", "shifted", "truncated_normal"]:
-            ds_variations[ds_name] = ds_variations[ds_name].map(to_grayscale)
+    # if dataset_str == "mnist" or dataset_str == "fashion_mnist":
+    #     for ds_name in ["maxent", "shifted", "truncated_normal"]:
+    #         ds_variations[ds_name] = ds_variations[ds_name].map(to_grayscale)
 
     num_unique_labels = len(class_probs)
     checkpoints = np.unique(
@@ -215,7 +216,7 @@ def run_model(
 
                 model = ConvNextV2ForImageClassification.from_pretrained(
                     model_path
-                ).cuda()
+                ).cuda() # type: ignore
             case ("regnet", _, arch):
                 from torchvision.models import (
                     regnet_y_1_6gf,
@@ -240,7 +241,7 @@ def run_model(
                 net.stem[0].stride = (1, 1)  # type: ignore
                 model = HfWrapper(net)
                 state_dict_path = os.path.join(model_path, "model.safetensors")
-                model.load_state_dict(safetensors.torch.load_file(state_dict_path))
+                model.load_state_dict(safetensors.torch.load_file(state_dict_path)) # type: ignore
                 model.cuda()
 
             case ("swin", _, arch):
@@ -283,7 +284,7 @@ def run_model(
                 )
                 model = HfWrapper(swin)
                 state_dict_path = os.path.join(model_path, "model.safetensors")
-                model.load_state_dict(safetensors.torch.load_file(state_dict_path))
+                model.load_state_dict(safetensors.torch.load_file(state_dict_path)) # type: ignore
                 model.cuda()
             case _:
                 raise ValueError(f"Unknown model {model_arch}")
@@ -359,13 +360,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     data_dicts = []
+    sink = Path(args.sink)
+    sink.mkdir(exist_ok=True, parents=True)
+
     for dataset in args.datasets:
         data_dict = run_dataset(
-            dataset, args.nets, args.seed, args.checkpoints, args.data
+            dataset, args.nets, args.seed, args.checkpoints, Path(args.data)
         )
         df = pd.DataFrame(data_dict)
 
         dataset_file_str = dataset.replace("/", "--")
         df.to_csv(
-            Path(args.sink) / f"vision-{args.nets}-{dataset_file_str}.csv", index=False
+            sink / f"vision-{args.nets}-{dataset_file_str}.csv", index=False
         )

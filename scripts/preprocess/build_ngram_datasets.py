@@ -2,6 +2,7 @@ import argparse
 import os
 import pickle
 from pathlib import Path
+import token
 
 import numpy as np
 import torch
@@ -10,7 +11,7 @@ from datasets import Dataset, load_from_disk
 from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.stats import entropy
-from tokengrams import MemmapIndex
+from tokengrams import ShardedMemmapIndex
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
@@ -34,18 +35,16 @@ def build_bigrams(tokens_path: Path, bigrams_path: Path):
         .T
     )
 
-    es_bigrams = coo_matrix(counts)
-
+    sparse_bigrams = coo_matrix(counts)
     with open(bigrams_path, "wb") as f:
-        pickle.dump(es_bigrams, f)
+        pickle.dump(sparse_bigrams, f)
 
 
 class NgramSeqModel:
     def __init__(
         self,
         bigrams_path: Path,
-        token_path: Path | None,
-        token_index_path: Path | None,
+        tokengrams_paths: list[tuple[str, str]] | None,
         batch: int,
         seq_len: int,
     ):
@@ -59,18 +58,22 @@ class NgramSeqModel:
         self.unigram_probs = torch.tensor(bigram_counts).sum(dim=1).cuda()
         self.unigram_probs /= self.unigram_probs.sum()
 
-        self.bigrams = bigram_counts + np.finfo(bigram_counts.dtype).eps
-        self.bigram_probs = self.bigrams / self.bigrams.sum(axis=1)[:, None]
+        self.bigram_probs = bigram_counts / bigram_counts.sum(axis=1)[:, None]
+        self.bigram_probs = np.nan_to_num(self.bigram_probs)
+        self.bigram_probs = torch.tensor(self.bigram_probs).cuda()
 
-        if token_path and token_index_path:
-            self.tokengrams = MemmapIndex(str(token_path), str(token_index_path))
+
+        print(self.bigram_probs.sum())
+
+        if tokengrams_paths:
+            self.tokengrams = ShardedMemmapIndex(tokengrams_paths, self.tokenizer.vocab_size)
 
     def generate_unigram_seq(self, num_samples: int) -> torch.Tensor:
         return torch.multinomial(
             self.unigram_probs, num_samples * self.seq_len, replacement=True
         ).reshape(num_samples, self.seq_len)
 
-    def generate_bigram_seq(self, num_samples: int) -> np.array:
+    def generate_bigram_seq(self, num_samples: int) -> np.ndarray:
         """Auto-regressively generate bigram model sequence. Initialize each
         sequence by sampling from a unigram model.
 
@@ -84,7 +87,7 @@ class NgramSeqModel:
             ]
             for _ in range(self.seq_len - 1):
                 prev = result[-1]
-                rows = self.bigrams[prev[:, 0].cpu().numpy()]
+                rows = self.bigram_probs[prev[:, 0].cpu().numpy()]
                 next = torch.multinomial(torch.tensor(rows, device="cuda"), 1)
                 result.append(next)
 
@@ -106,7 +109,7 @@ class NgramSeqModel:
             import time
 
             start = time.time()
-            samples = self.tokengrams.batch_sample(
+            samples = self.tokengrams.sample_unsmoothed(
                 [], n=n, k=self.seq_len, num_samples=num_samples
             )
             print(
@@ -116,19 +119,68 @@ class NgramSeqModel:
             )
         return np.array(samples)
 
-    def generate_ngram_dists(
+
+    def generate_ngram_logprobs(
         self,
         data: Dataset,
         data_path: Path,
         n: int,
         vocab_size: int = 50_277,
-        batch_size: int = 64,
+        batch_size: int = 4,
+    ) -> None:
+        data_loader = DataLoader(data, batch_size) # type: ignore
+
+        file_path = data_path / f"{n}-gram-pile-logprobs-32bit-{len(data)}.npy"
+        mode = "w+" if not file_path.exists() else "r+"
+        mmap = np.memmap(
+            file_path,
+            mode=mode,
+            dtype=np.float32,
+            shape=(len(data) * self.seq_len, vocab_size),
+        )
+        # if n == 1:
+        #     unigram_logprobs = self.unigram_probs.log().cpu().repeat(self.seq_len * len(data)).reshape(-1, vocab_size)
+        #     mmap[:] = np.array(unigram_logprobs, dtype=np.float32)
+        #     return
+
+        chunk_len = batch_size * self.seq_len
+        for i, batch in tqdm(enumerate(data_loader)):
+            if n == 1:
+                logprobs = self.unigram_probs.log().cpu().repeat(chunk_len).reshape(-1, vocab_size)
+                mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(logprobs.cpu(), dtype=np.float32)
+            elif n == 2:
+                logprobs = self.bigram_probs[batch["input_ids"].flatten()].log()
+                mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(logprobs.cpu(), dtype=np.float32)
+            else:
+                ngram_prefixes = []
+                for row in batch["input_ids"]:
+                    # split into sequences of up to n - 1 tokens that end with each token
+                    ngram_prefixes.extend(
+                        [row[max(0, i - (n - 1)) : i].tolist() for i in range(len(row))]
+                    )
+                counts = torch.tensor(
+                    self.tokengrams.batch_count_next(ngram_prefixes),
+                )[:, :-1]
+                logprobs = torch.nan_to_num(counts / counts.sum(dim=1, keepdim=True)).log()
+                mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(
+                    logprobs, dtype=np.float32
+                )
+
+            if i == 0:
+                print(logprobs[0].exp().sum())
+    
+    def generate_smoothed_ngram_dists(
+        self,
+        data: Dataset,
+        data_path: Path,
+        n: int,
+        vocab_size: int = 50_277,
+        batch_size: int = 16,
     ) -> None:
         print(n)
-        eps = torch.finfo(torch.float16).eps
-        data_loader = DataLoader(data, batch_size)
+        data_loader = DataLoader(data, batch_size) # type: ignore
 
-        file_path = data_path / f"{n}-gram-pile-dists-16bit.npy"
+        file_path = data_path / f"smoothed-{n}-gram-pile-dists-16bit-{len(data)}.npy"
         mode = "w+" if not file_path.exists() else "r+"
         mmap = np.memmap(
             file_path,
@@ -137,25 +189,20 @@ class NgramSeqModel:
             shape=(len(data) * self.seq_len, vocab_size),
         )
 
+        chunk_len = batch_size * self.seq_len
         for i, batch in tqdm(enumerate(data_loader)):
             ngram_prefixes = []
             for row in batch["input_ids"]:
-                # split into sequences of up to n - 1 tokens that end with each token
                 ngram_prefixes.extend(
                     [row[max(0, i - (n - 1)) : i].tolist() for i in range(len(row))]
                 )
-            counts = torch.tensor(
-                self.tokengrams.batch_count_next(ngram_prefixes, vocab_size),
-            )[:, :-1]
-            probs = counts / (counts.sum(dim=1, keepdim=True) + eps)
-            probs = probs.log()
+            res = self.tokengrams.batch_get_smoothed_probs(ngram_prefixes)
+            probs = np.log(np.array(res, dtype=np.float32))
+            
+            mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = probs.astype(np.float16)
 
-            chunk_len = batch_size * self.seq_len
-            mmap[(i * chunk_len) : ((i * chunk_len) + chunk_len)] = np.array(
-                probs, dtype=np.float16
-            )
 
-    def get_sample_strs(self, n: int, k: int) -> None:
+    def get_sample_strs(self, n: int, k: int) -> list[str]:
         seqs = self.generate_ngrams(n, k)
         return [self.tokenizer.decode(seq, skip_special_tokens=True) for seq in seqs]
 
@@ -176,16 +223,16 @@ class NgramSeqModel:
 
 
 def main(
-    ns: list[int],
+    ngram_orders: list[int],
     k: int,
     num_samples: int,
     bpb_coeff: float,
     tokens_path: Path,
-    tokengrams_path: Path,
-    tokengrams_idx_path: Path,
+    tokengrams_paths: list[tuple[str, str]],
     data_path: Path,
+    smooth: bool = False,
 ):
-    if 2 in ns and not os.path.exists(data_path / "bigrams.pkl"):
+    if 2 in ngram_orders and not os.path.exists(data_path / "bigrams.pkl"):
         print("Building bigrams...")
         build_bigrams(tokens_path, data_path / "bigrams.pkl")
 
@@ -196,10 +243,13 @@ def main(
             H = conditional_entropy(arr)
             print("Bigram entropy: ", H, "Bigram entropy (bpb):", H * bpb_coeff)
 
-    for n in ns:
+    for n in ngram_orders:
         print(f"Loading {n}-gram model...")
         ngram_model = NgramSeqModel(
-            data_path / "bigrams.pkl", tokengrams_path, tokengrams_idx_path, 4, k
+            data_path / "bigrams.pkl", 
+            tokengrams_paths if max(ngram_orders) > 2 else None, 
+            1, 
+            k
         )
 
         # Check sampled sequences look correct
@@ -208,30 +258,32 @@ def main(
         # print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
         # data = ngram_model.generate_ngrams(n, num_samples)
         # data_dict = {"input_ids": torch.tensor(data)}
-        # Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences.hf"))
+        # Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences-full-pile-{num_samples}.hf"))
 
+        # if smooth:
+        #     print(f"Generating smoothed {n}-gram logprobs...")
+        #     pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(
+        #         range(num_samples)
+        #     )
+        #     ngram_model.generate_smoothed_ngram_dists(pile_val, data_path, n)
+        # else:
         print(f"Generating {n}-gram logprobs...")
         pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(
             range(num_samples)
         )
-        ngram_model.generate_ngram_dists(pile_val, data_path, n)
+        ngram_model.generate_ngram_logprobs(pile_val, data_path, n)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument(
-        "--n",
-        default=[3],
-        nargs="+",
-        type=int,
-        help="N-gram models to sample from",
-    )
+    parser.add_argument("--n", default=[3], nargs="+", type=int, 
+                        help="N-gram models to sample from")
+    parser.add_argument("--smooth", action="store_true")
     parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)
-    # bpb_coeff = 0.4157027 # es 1 billion tokens
-    parser.add_argument("--bpb_coeff", default=0.3650388, type=float)  # pile
+    parser.add_argument("--bpb_coeff", default=0.3650388, type=float) # pile
     parser.add_argument(
         "--data_path",
         default="data/pile-deduped",
@@ -240,15 +292,19 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--tokens_path",
-        # "data/es/es_tokenized.bin",
         default="/mnt/ssd-1/pile_preshuffled/standard/document.bin",
         type=str,
         help="Path to u16 tokenized dataset",
     )
     args = parser.parse_args()
 
-    tokengrams_path = Path(args.data_path) / "document-10G.bin"
-    tokengrams_index_path = Path(args.data_path) / "document-10G.idx"
+    tokengrams_paths = [
+        (
+            f'/mnt/ssd-1/pile-ngrams-tokens/document-{i:05d}-of-00020.bin', 
+            f'/mnt/ssd-1/pile-suffix-arrays/suffix_array_{i:02d}.idx'
+        )
+        for i in range(21)
+    ][:4]
 
     main(
         args.n,
@@ -256,7 +312,7 @@ if __name__ == "__main__":
         args.num_samples,
         args.bpb_coeff,
         Path(args.tokens_path),
-        tokengrams_path,
-        tokengrams_index_path,
+        tokengrams_paths,
         Path(args.data_path),
+        args.smooth
     )

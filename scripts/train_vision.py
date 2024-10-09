@@ -8,10 +8,10 @@ from typing import Callable
 
 import numpy as np
 import torch
-import torchvision.transforms as T
-import torchvision.transforms.functional as TF
-from concept_erasure import QuadraticEditor, QuadraticFitter
-from concept_erasure.quantile import QuantileNormalizer
+# import torchvision.transforms as T
+# import torchvision.transforms.functional as TF
+import torchvision.transforms.v2.functional as TF
+from concept_erasure import QuadraticEditor, QuadraticFitter, QuantileNormalizer
 from concept_erasure.utils import assert_type
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset, load_from_disk
 from einops import rearrange

@@ -22,7 +22,7 @@ def num_classes(dataset_str: str):
 
 
 def main(data_path: Path, images_path: Path):
-    images_path.mkdirs(exist_ok=True, parents=True)
+    images_path.mkdir(exist_ok=True, parents=True)
 
     for dataset_str, pretty_dataset_str in [
         ("cifar10", "CIFAR10"),
@@ -39,11 +39,12 @@ def main(data_path: Path, images_path: Path):
             "swin",
             "Swin Transformer",
         ]
-        grayscale = (
-            "-grayscale"
-            if (dataset_str == "mnist" or dataset_str == "fashion_mnist")
-            else ""
-        )
+        # grayscale = (
+        #     "-grayscale"
+        #     if (dataset_str == "mnist" or dataset_str == "fashion_mnist")
+        #     else ""
+        # )
+        grayscale = ""
         df = pd.read_csv(
             data_path / f'vision-{dataset_str.replace("/", "--")}{grayscale}.csv'
         )
@@ -52,7 +53,6 @@ def main(data_path: Path, images_path: Path):
             dict(zip(model_metadata[::2], model_metadata[1::2]))
         )
         df = df[df["ds"] == dataset_str]
-
         plot(dataset_str, pretty_dataset_str, df, images_path)
 
 
@@ -67,9 +67,10 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
     }
     maxent_col_names = {
         "independent": "1<sup>st</sup> order (ICS)",
-        "maxent": "1<sup>st</sup> order (Dury)",
+        "maxent": "1<sup>st</sup> order (Conrad)",
         "gaussian": "2<sup>nd</sup> order (Gaussian)",
         "truncated_normal": "2<sup>nd</sup> order (Truncated normal)",
+        "third-order": "3<sup>nd</sup> order",
         "real": "Val. set",
     }
 
@@ -95,6 +96,9 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
             model_df = df[df["net"] == model]
 
             for j, (col_name, legend_name) in enumerate(col_dict.items()):
+                if not f'{col_name}_accuracy' in model_df.columns:
+                    print("skipping bc not found", col_name, model_df.columns, legend_name)
+                    continue
                 opaque_color = (
                     px.colors.qualitative.Plotly[j] if col_name != "real" else "#000000"
                 )
@@ -124,6 +128,9 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
 
                     for arch in model_df["arch"].unique():
                         arch_df = model_df[model_df["arch"] == arch]
+                        if not f'{col_name}_accuracy' in arch_df.columns:
+                            print("skipping bc not found", arch, col_name, model_df.columns, legend_name)
+                            continue
 
                         fig.add_trace(
                             go.Scatter(
@@ -169,7 +176,7 @@ def plot(dataset_str: str, pretty_dataset_str: str, df: pd.DataFrame, images_pat
                 y=0.95,
                 xanchor="center",
                 yanchor="top",
-                font=dict(size=8),
+                font=dict(size=11),
                 bgcolor="rgba(255, 255, 255, 0.85)",
             ),
             margin=dict(l=20, r=20, t=50, b=20),

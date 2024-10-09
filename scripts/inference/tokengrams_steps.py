@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from datasets import load_from_disk
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from ml_dtypes import bfloat16 as np_bfloat16
 from scripts.script_utils.divergences import (
     js_divergence_from_logits,
@@ -52,13 +52,22 @@ class MemmapBFloat16Dataset(Dataset):
 
 class NgramTokensDataset(Dataset):
     def __init__(self, n, num_samples, seq_len):
-        if n == 2:
-            dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile.hf')
+        if n < 3:
+            if num_samples == 4096:
+                dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile-4096.hf')
+                print("Running 4096 samples for 1- to 2-grams")
+            else:
+                dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile.hf')
             tokens = dataset['input_ids']
             self.data = torch.from_numpy(np.stack(tokens)).long()
         else:
             data_path = Path("/mnt/ssd-1/lucia/ngrams-across-time/data")
-            tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards.npy"
+            if num_samples == 4096:
+                tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards-4096.npy"
+                print("Running 4096 samples above 2-grams")
+            else:
+                tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards.npy"
+                print("Running 1024 samples")
             if not tokens_path.exists():
                 raise ValueError(
                     f"Could not find tokens, please use Tokengrams to generate"
@@ -153,7 +162,7 @@ def worker(
     val_path: Path,
     div: bool,
     loss: bool,
-) -> dict[str, list[float]]:
+) -> dict[str, list[float] | list[torch.Tensor]]:
     print(f"Calculating loss? {loss}. Calculating divs? {div}")
     torch.cuda.set_device(gpu_id)
     
@@ -189,8 +198,10 @@ def worker(
                     torch_dtype=torch.float16,
                     revision=f"step{step}",
                     cache_dir=".cache",
-                    # quantization_config=BitsAndBytesConfig(load_in_4bit=True)
-                ).cuda()
+                    quantization_config=BitsAndBytesConfig(load_in_8bit=True) if "12b" in model_name else None,
+                )
+                if not "12b" in model_name:
+                    model.cuda()
                 success = True
                 break
             except Exception as e:
@@ -210,6 +221,8 @@ def worker(
             continue
 
         running_means = defaultdict(float)
+        # for n in ngram_orders:
+        #     running_means[f'mean_{n}_per_token_loss'] = torch.zeros(seq_len - 1) # type: ignore
 
         for _ in range(num_iters):
             batch = next(cycled_loader)
@@ -234,6 +247,13 @@ def worker(
                 if f'ngram_tokens_{n}' in batch:
                     ngram_tokens = batch[f'ngram_tokens_{n}'].cuda()
                     logits = model(ngram_tokens).logits[:, :, :d_vocab]
+                    # per_token_loss = F.cross_entropy(
+                    #     logits[:, :-1].flatten(0, 1),
+                    #     ngram_tokens[:, 1:].flatten(0, 1),
+                    #     reduction="none"
+                    # ).reshape(batch_size, seq_len - 1).mean(0)
+                    # running_means[f'mean_{n}_per_token_loss'] += per_token_loss.cpu() / num_iters
+
                     mean_loss: float = F.cross_entropy(
                         logits[:, :-1].flatten(0, 1),
                         ngram_tokens[:, 1:].flatten(0, 1),
@@ -295,40 +315,49 @@ def main(
     div: bool,
     loss: bool,
     overwrite: bool,
+    num_samples: int,
 ):
     debug = False
     output_path.mkdir(exist_ok=True, parents=True)
 
     mp.set_start_method("spawn")
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-    num_samples = 1024
+    
     seq_len = 2049
 
     for model_name, batch_size in (
         [
-            ("pythia-14m", 8),
-            ("pythia-70m", 4),
-            ("pythia-160m", 4),
-            ("pythia-410m", 4),
-            ("pythia-1b", 4),
-            ("pythia-1.4b", 4),
-            ("pythia-2.8b", 2),
-            ("pythia-6.9b", 1),
+            # ("pythia-14m", 8),
+            # ("pythia-70m", 4),
+            # ("pythia-160m", 4),
+            # ("pythia-410m", 4),
+            # ("pythia-1b", 4),
+            # ("pythia-1.4b", 4),
+            # ("pythia-2.8b", 2),
+            # ("pythia-6.9b", 1),
             ("pythia-12b", 1),
-            ("pythia-14m-warmup01", 8),
-            ("pythia-70m-warmup01", 4),
+            # ("pythia-14m-warmup01", 8),
+            # ("pythia-70m-warmup01", 4),
         ]
-        + [(f"pythia-14m-seed{i}", 8) for i in range(1, 10)]
-        + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
-        + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
-        + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
+        # + [(f"pythia-14m-seed{i}", 8) for i in range(1, 10)]
+        # + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
+        # + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
+        # + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
     ):
         print("Collecting data for", model_name)
+
+        (output_path / "backup").mkdir(exist_ok=True)
 
         current_df_path = output_path / f"ngram_{model_name}_{num_samples}.csv"
         if not current_df_path.exists():
             pd.DataFrame({"step": steps}).to_csv(current_df_path)
         current_df = pd.read_csv(current_df_path)
+        
+        current_df.to_csv(
+            output_path
+            / "backup"
+            / f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
+        )  
         current_df.set_index("step", inplace=True, drop=False)
 
         if not overwrite:
@@ -371,19 +400,31 @@ def main(
                 div=div,
                 loss=loss,
             )
-        df = pd.concat([pd.DataFrame(d) for d in data])
 
-        (output_path / "backup").mkdir(exist_ok=True)
-        current_df.to_csv(
-            output_path
-            / "backup"
-            / f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
-        )  
+        # Extract out per token loss tensors and make them into a separate dataframe with both
+        # step and token index. don't worry about merging with other dfs etc.
+        # if loss:
+        #     result = []
+        #     for d in data:
+        #         # for step in step:
+        #         for step_index, step in enumerate(d["step"]):
+        #             step_dict = {"step": [step] * (seq_len - 1),"token": list(range(1, seq_len)),**{f"mean_{n}_per_token_loss": d[f"mean_{n}_per_token_loss"][step_index].tolist() for n in ngram_orders}}
+        #             result.append(step_dict)
+
+        #     in_context_df = pd.concat(pd.DataFrame(item) for item in result)
+        #     # in_context_df.to_csv(
+        #     #     pd.concat([pd.DataFrame(r) for r in result])
+        #     in_context_df.to_csv(
+        #         output_path / f"context_{model_name}_{num_samples}.csv", index=False
+        #     )
+
+
+        df = pd.concat([pd.DataFrame(d) for d in data])
         df.set_index("step", inplace=True, drop=False)
         for col in df.columns:
             current_df[col] = (
                 df[col].combine_first(current_df[col]) if col in current_df else df[col]
-            )
+            )   
 
         if "step" not in current_df.columns:
             current_df.reset_index(inplace=True)
@@ -460,27 +501,32 @@ if __name__ == "__main__":
         help="Path to save output CSVs",
     )
     parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=4096
+    )
+    parser.add_argument(
         "--steps",
         default=[
             1,
             2,
             4,
             8,
-            16,
+            # 16,
             32,
             64,
             128,
-            256,
+            # 256,
             512,
-            1000,
+            # 1000,
             2000,
             5000,
-            8000,
+            # 8000,
             16_000,
             33_000,
-            66_000,
+            # 66_000,
             131_000,
-            143_000,
+            # 143_000,
         ],
         nargs="+",
         help="Which model checkpoints to collect data for",
@@ -496,4 +542,5 @@ if __name__ == "__main__":
         args.div,
         args.loss,
         args.overwrite,
+        args.num_samples
     )

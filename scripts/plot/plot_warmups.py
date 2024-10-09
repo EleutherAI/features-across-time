@@ -4,12 +4,13 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plot_ngram import (
+from scripts.plot.plot_ngram import (
     base_2_log_ticks,
     get_confidence_intervals,
     hex_to_rgba,
     kaleido_workaround,
     marker_series,
+    get_model_size,
 )
 from plotly.subplots import make_subplots
 
@@ -173,14 +174,14 @@ def plot_loss_and_divergence(
             )
 
     fig.update_layout(
-        width=1000,
+        width=1200,
         height=600,
         legend=dict(
             x=0.98,
             y=0.98,
             xanchor="right",
             yanchor="top",
-            font=dict(size=8),
+            font=dict(size=11),
             bgcolor="rgba(255, 255, 255, 0.85)",
         ),
         margin=dict(l=20, r=20, t=50, b=60),
@@ -191,30 +192,38 @@ def plot_loss_and_divergence(
     )
 
     fig.update_yaxes(
-        title_text="Loss", title_font=dict(size=12), title_standoff=10, row=1, col=1
+        title_text="Loss", title_font=dict(size=16), title_standoff=10, row=1, col=1
     )
     fig.update_yaxes(range=[1.8, 4.5], row=1, col=1)
     fig.update_yaxes(range=[0, 4.5], row=2, col=1)
     fig.update_yaxes(
         title_text="KL divergence",
-        title_font=dict(size=12),
+        title_font=dict(size=16),
         title_standoff=10,
         row=2,
         col=1,
     )
     fig.add_annotation(
         dict(
-            text="Training step",
+            text="Training steps",
             xref="paper",
             yref="paper",
             x=0.5,
             y=-0.1,
             showarrow=False,
-            font=dict(size=14),
+            font=dict(size=18),
         )
     )
 
     fig.write_image(images_path / f"warmups-{model_size}m.pdf", format="pdf")
+
+
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="output")
+    parser.add_argument("--images_path", type=str, default="images")
+    parser.add_argument("--num_samples", "-s", type=int, default=4096)
+    return parser.parse_args()
 
 
 def main(
@@ -224,7 +233,7 @@ def main(
         bpb_coefficient: float,
         entropies: list[float]
     ):
-    images_path.mkdirs(exist_ok=True, parents=True)
+    images_path.mkdir(exist_ok=True, parents=True)
     
     for model_size in [14, 70]:
         model_metadata = [
@@ -236,9 +245,11 @@ def main(
             model_df = pd.read_csv(data_path / f"ngram_{model_name}_{num_samples}.csv")
             model_df["model_name"] = model_name
             model_df["pretty_model_name"] = pretty_model_name
+            model_df["model_size"] = get_model_size(model_name)
             model_dfs.append(model_df)
 
         df = pd.concat(model_dfs)
+        df = df.sort_values(['model_size', 'step'], ascending=True)
         plot_loss_and_divergence(
             df, 
             images_path, 
@@ -250,11 +261,7 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="output")
-    parser.add_argument("--images_path", type=str, default="images")
-    parser.add_argument("--num_samples", "-s", type=int, default=1024)
-    args = parser.parse_args()
+    args = parse_args()
 
     main(
         Path(args.data_path), 

@@ -8,12 +8,12 @@ from typing import Callable
 
 import numpy as np
 import torch
-import torchvision.transforms as T
-import torchvision.transforms.functional as TF
-from concept_erasure import QuadraticEditor, QuadraticFitter
-from concept_erasure.quantile import QuantileNormalizer
+# import torchvision.transforms as T
+# import torchvision.transforms.functional as TF
+import torchvision.transforms.v2.functional as TF
+from concept_erasure import QuadraticEditor, QuadraticFitter, QuantileNormalizer
 from concept_erasure.utils import assert_type
-from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
+from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset, load_from_disk
 from einops import rearrange
 from torch import Tensor, nn, optim
 from torch.distributions import MultivariateNormal
@@ -170,6 +170,16 @@ class LogSpacedCheckpoint(TrainerCallback):
             control.should_save = True
 
 
+@dataclass
+class LossLoggingCallback(TrainerCallback):
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        gpu_rank = int(os.environ.get('LOCAL_RANK', '0'))
+        if 'loss' in logs:
+            print(f"{gpu_rank}: Step {state.global_step}: Training loss: {logs['loss']}")
+        if 'eval_loss' in logs:
+            print(f"{gpu_rank}: Step {state.global_step}: Evaluation loss: {logs['eval_loss']}")
+
+
 def infer_columns(feats: Features) -> tuple[str, str]:
     # Infer the appropriate columns by their types
     img_cols = [k for k in feats if isinstance(feats[k], Image)]
@@ -198,9 +208,6 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
     img_col, label_col = infer_columns(ds["train"].features)
     labels = ds["train"].features[label_col].names
     print(f"Classes in '{dataset_str}': {labels}")
-
-    # Convert to RGB so we don't have to think about it
-    ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
 
     # Convert to RGB so we don't have to think about it
     ds = ds.map(lambda x: {img_col: x[img_col].convert("RGB")})
@@ -277,12 +284,19 @@ def run_dataset(dataset_str: str, nets: list[str], train_on_fake: bool, seed: in
         X = rearrange(X, "n h w c -> n c h w")
         Y = assert_type(Tensor, val[label_col])
 
+    max_entropy = load_from_disk(Path.cwd() / f'shifted-data/dury-{dataset_str}.hf')
+    max_entropy.set_format('torch', columns=['pixel_values','label'])
+    shifted = load_from_disk(Path.cwd() / f'shifted-data/shifted-{dataset_str}.hf')
+    shifted.set_format('torch', columns=['pixel_values','label'])
+
     val_sets = {
         "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
         "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "gaussian": gaussian,
         "real": val,
         "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
+        "maxent": max_entropy,
+        "shift": shifted,
     }
     for net in nets:
         run_model(
@@ -438,7 +452,7 @@ def run_model(
     trainer = Trainer(
         model,
         args=args,
-        callbacks=[LogSpacedCheckpoint()],
+        callbacks=[LogSpacedCheckpoint(), LossLoggingCallback()],
         compute_metrics=lambda x: {
             "acc": np.mean(x.label_ids == np.argmax(x.predictions, axis=-1))
         },
@@ -453,10 +467,19 @@ def run_model(
 
 
 if __name__ == "__main__":
+    # TODO enable naming runs like with w2s
     os.environ["WANDB_PROJECT"] = "features-across-time"
 
     parser = ArgumentParser()
-    parser.add_argument("--datasets", type=str, default=["cifar10"], nargs="+")
+    parser.add_argument("--datasets", type=str, default=[
+            "cifar10", 
+            "svhn:cropped_digits", 
+            "mnist", 
+            "evanarlian/imagenet_1k_resized_256", 
+            "fashion_mnist",
+            "cifarnet",
+            "high_var"
+        ], nargs="+")
     parser.add_argument(
         "--nets",
         type=str,

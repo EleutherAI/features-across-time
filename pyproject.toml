@@ -1,6 +1,6 @@
 [project]
 name = "features-across-time"
-description = "Erasing concepts from neural representations with provable guarantees"
+description = ""
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["interpretability", "explainable-ai"]

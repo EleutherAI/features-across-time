@@ -53,21 +53,13 @@ class MemmapBFloat16Dataset(Dataset):
 class NgramTokensDataset(Dataset):
     def __init__(self, n, num_samples, seq_len):
         if n < 3:
-            if num_samples == 4096:
-                dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile-4096.hf')
-                print("Running 4096 samples for 1- to 2-grams")
-            else:
-                dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile.hf')
+            dataset = load_from_disk(f'/mnt/ssd-1/lucia/features-across-time/data/pile-deduped/{n}-gram-sequences-full-pile-{num_samples}.hf')
             tokens = dataset['input_ids']
             self.data = torch.from_numpy(np.stack(tokens)).long()
         else:
             data_path = Path("/mnt/ssd-1/lucia/ngrams-across-time/data")
-            if num_samples == 4096:
-                tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards-4096.npy"
-                print("Running 4096 samples above 2-grams")
-            else:
-                tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards.npy"
-                print("Running 1024 samples")
+            tokens_path = data_path / f"{n}-gram-autoregressive-samples-4-shards-{num_samples}.npy"
+            
             if not tokens_path.exists():
                 raise ValueError(
                     f"Could not find tokens, please use Tokengrams to generate"
@@ -114,9 +106,7 @@ def create_dataloaders(
         num_samples: int, 
         seq_len: int, 
         batch_size: int, 
-        d_vocab: int, 
-        div=True, 
-        loss=True
+        d_vocab: int
     ) -> MultiDatasetLoader:
     dataloaders: dict[str, Any] = {}
 
@@ -124,25 +114,22 @@ def create_dataloaders(
         load_from_disk(str(val_path)).select(range(num_samples)), batch_size=batch_size  # type: ignore
     )
     
-    if div:
-        div_loaders = {
-            f'ngram_logprobs_{n}': DataLoader(
-                MemmapBFloat16Dataset(
-                    str(ngram_path / f"{n}-gram-pile-logprobs-21_shards-bfloat16.npy"),
-                    num_samples, seq_len, d_vocab),
-                batch_size=batch_size * seq_len, # TODO check this
-                collate_fn=collate_np,
-            ) for n in ngram_orders
-        }
-        dataloaders.update(div_loaders)
-    
-    if loss:
-        dataloaders.update({
-            f'ngram_tokens_{n}': DataLoader(
-                NgramTokensDataset(n, num_samples, seq_len),
-                batch_size=batch_size,
-            ) for n in ngram_orders
-        })
+    dataloaders.update({
+        f'ngram_logprobs_{n}': DataLoader(
+            MemmapBFloat16Dataset(
+                str(ngram_path / f"{n}-gram-pile-logprobs-21_shards-bfloat16.npy"),
+                num_samples, seq_len, d_vocab),
+            batch_size=batch_size * seq_len,
+            collate_fn=collate_np,
+        ) for n in ngram_orders
+    })
+
+    dataloaders.update({
+        f'ngram_tokens_{n}': DataLoader(
+            NgramTokensDataset(n, num_samples, seq_len),
+            batch_size=batch_size,
+        ) for n in ngram_orders
+    })
     
     return MultiDatasetLoader(dataloaders)
 
@@ -160,10 +147,7 @@ def worker(
     ngram_orders: list[int],
     ngram_path: Path,
     val_path: Path,
-    div: bool,
-    loss: bool,
 ) -> dict[str, list[float] | list[torch.Tensor]]:
-    print(f"Calculating loss? {loss}. Calculating divs? {div}")
     torch.cuda.set_device(gpu_id)
     
     multi_loader = create_dataloaders(
@@ -173,9 +157,7 @@ def worker(
         num_samples, 
         seq_len, 
         batch_size, 
-        d_vocab, 
-        div, 
-        loss
+        d_vocab
     )
     cycled_loader = cycle(multi_loader)
     print("Loaded data...")
@@ -211,12 +193,10 @@ def worker(
                 else:
                     print("Failed to retrieve model at step", step, e)
                     for n in ngram_orders:
-                        if loss:
-                            data[f"mean_{n}_gram_loss"].append(np.nan)
-                            data[f"mean_{n}_gram_accuracy"].append(np.nan)
-                        if div:
-                            data[f"mean_{n}_gram_kl_div"].append(np.nan)
-                            data[f"mean_{n}_gram_js_div"].append(np.nan)
+                        data[f"mean_{n}_gram_loss"].append(np.nan)
+                        data[f"mean_{n}_gram_accuracy"].append(np.nan)
+                        data[f"mean_{n}_gram_kl_div"].append(np.nan)
+                        data[f"mean_{n}_gram_js_div"].append(np.nan)
         if not success:
             continue
 
@@ -226,7 +206,6 @@ def worker(
 
         for _ in range(num_iters):
             batch = next(cycled_loader)
-
             tokens = batch['val']['input_ids'].cuda()
             logits = model(tokens).logits[:, :, :d_vocab].flatten(0, 1)
             del tokens
@@ -266,43 +245,16 @@ def worker(
                     )
 
             pbar.update(1)
-        print(running_means[f"mean_{n}_gram_kl_div"])
-        print(running_means[f"mean_{n}_gram_js_div"])
-        print(running_means[f"mean_{n}_gram_loss"])
-        print(running_means[f"mean_{n}_gram_accuracy"])
+        print(running_means[f"mean_{ngram_orders[-1]}_gram_kl_div"])
+        print(running_means[f"mean_{ngram_orders[-1]}_gram_js_div"])
+        print(running_means[f"mean_{ngram_orders[-1]}_gram_loss"])
+        print(running_means[f"mean_{ngram_orders[-1]}_gram_accuracy"])
 
         for key in running_means.keys():
             data[key].append(running_means[key])
 
     # Convert defaultdict to dict for DataFrame
     return {key: value for (key, value) in data.items()}
-
-
-def get_missing_steps(
-    df: pd.DataFrame,
-    ngram_orders: list[int],
-    steps: list[int],
-    loss: bool,
-    div: bool,
-) -> set[int]:
-    missing_steps = set()
-    for ngram_order in ngram_orders:
-        if loss:
-            if f"mean_{ngram_order}_gram_loss" not in df.columns:
-                missing_steps.update(steps)
-            elif f"mean_{ngram_order}_gram_loss" in df:
-                missing_steps.update(
-                    df[df[f"mean_{ngram_order}_gram_loss"].isnull()]["step"].tolist()
-                )
-        if div:
-            if f"mean_{ngram_order}_gram_kl_div" not in df.columns:
-                missing_steps.update(steps)
-            elif f"mean_{ngram_order}_gram_kl_div" in df:
-                missing_steps.update(
-                    df[df[f"mean_{ngram_order}_gram_kl_div"].isnull()]["step"].tolist()
-                )
-
-    return missing_steps
 
 
 def main(
@@ -312,123 +264,71 @@ def main(
     ngram_orders: list[int],
     steps: list[int],
     output_prefix: str,
-    div: bool,
-    loss: bool,
-    overwrite: bool,
     num_samples: int,
 ):
-    debug = False
+    mp.set_start_method("spawn")
+    
     output_path.mkdir(exist_ok=True, parents=True)
 
-    mp.set_start_method("spawn")
+    seq_len = 2049
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     
-    seq_len = 2049
-
     for model_name, batch_size in (
         [
-            # ("pythia-14m", 8),
-            # ("pythia-70m", 4),
-            # ("pythia-160m", 4),
-            # ("pythia-410m", 4),
-            # ("pythia-1b", 4),
-            # ("pythia-1.4b", 4),
-            # ("pythia-2.8b", 2),
-            # ("pythia-6.9b", 1),
+            ("pythia-14m", 8),
+            ("pythia-70m", 4),
+            ("pythia-160m", 4),
+            ("pythia-410m", 4),
+            ("pythia-1b", 4),
+            ("pythia-1.4b", 4),
+            ("pythia-2.8b", 2),
+            ("pythia-6.9b", 1),
             ("pythia-12b", 1),
-            # ("pythia-14m-warmup01", 8),
-            # ("pythia-70m-warmup01", 4),
+            ("pythia-14m-warmup01", 8),
+            ("pythia-70m-warmup01", 4),
         ]
-        # + [(f"pythia-14m-seed{i}", 8) for i in range(1, 10)]
-        # + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
-        # + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
-        # + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
+        + [(f"pythia-14m-seed{i}", 8) for i in range(1, 10)]
+        + [(f"pythia-70m-seed{i}", 4) for i in range(1, 10)]
+        + [(f"pythia-160m-seed{i}", 4) for i in range(1, 10)]
+        + [(f"pythia-410m-seed{i}", 4) for i in range(1, 5)]
     ):
         print("Collecting data for", model_name)
-
-        (output_path / "backup").mkdir(exist_ok=True)
-
-        current_df_path = output_path / f"ngram_{model_name}_{num_samples}.csv"
-        if not current_df_path.exists():
-            pd.DataFrame({"step": steps}).to_csv(current_df_path)
-        current_df = pd.read_csv(current_df_path)
-        
-        current_df.to_csv(
-            output_path
-            / "backup"
-            / f"{output_prefix}_{model_name}_{num_samples}_{time.time()}.csv"
-        )  
-        current_df.set_index("step", inplace=True, drop=False)
-
-        if not overwrite:
-            missing_steps = get_missing_steps(
-                current_df, ngram_orders, steps, loss, div
-            )
-            if not missing_steps:
-                continue
-
-            steps = [int(step) for step in list(missing_steps)]
-
-        if debug:
-            worker(
-                0,
-                steps,
-                model_name,
-                batch_size,
-                num_samples,
-                len(tokenizer),
-                seq_len,
-                ngram_orders,
-                ngram_path,
-                val_path,
-                div,
-                loss,
-            )
-        else:
-            data = run_workers(
-                worker,
-                # roughly log spaced steps + final step
-                steps,
-                model_name=model_name,
-                batch_size=batch_size,
-                num_samples=num_samples,
-                d_vocab=len(tokenizer.vocab),  # type: ignore
-                seq_len=seq_len,
-                ngram_orders=ngram_orders,
-                ngram_path=ngram_path,
-                val_path=val_path,
-                div=div,
-                loss=loss,
-            )
+        data = run_workers(
+            worker,
+            steps, # roughly log spaced steps + final step
+            model_name=model_name,
+            batch_size=batch_size,
+            num_samples=num_samples,
+            d_vocab=len(tokenizer.vocab),  # type: ignore
+            seq_len=seq_len,
+            ngram_orders=ngram_orders,
+            ngram_path=ngram_path,
+            val_path=val_path
+        )
 
         # Extract out per token loss tensors and make them into a separate dataframe with both
         # step and token index. don't worry about merging with other dfs etc.
-        # if loss:
-        #     result = []
-        #     for d in data:
-        #         # for step in step:
-        #         for step_index, step in enumerate(d["step"]):
-        #             step_dict = {"step": [step] * (seq_len - 1),"token": list(range(1, seq_len)),**{f"mean_{n}_per_token_loss": d[f"mean_{n}_per_token_loss"][step_index].tolist() for n in ngram_orders}}
-        #             result.append(step_dict)
+        # result = []
+        # for d in data:
+        #     for step_index, step in enumerate(d["step"]):
+        #         step_dict = {
+        #             "step": [step] * (seq_len - 1),
+        #             "token": list(range(1, seq_len)),
+        #             **{
+        #                 f"mean_{n}_per_token_loss": d[f"mean_{n}_per_token_loss"][step_index].tolist() 
+        #                 for n in ngram_orders
+        #             }
+        #         }
+        #         result.append(step_dict)
 
-        #     in_context_df = pd.concat(pd.DataFrame(item) for item in result)
-        #     # in_context_df.to_csv(
-        #     #     pd.concat([pd.DataFrame(r) for r in result])
-        #     in_context_df.to_csv(
-        #         output_path / f"context_{model_name}_{num_samples}.csv", index=False
-        #     )
-
+        # in_context_df = pd.concat(pd.DataFrame(item) for item in result)
+        # in_context_df.to_csv(
+        #     output_path / f"context_{model_name}_{num_samples}.csv", index=False
+        # )
 
         df = pd.concat([pd.DataFrame(d) for d in data])
         df.set_index("step", inplace=True, drop=False)
-        for col in df.columns:
-            current_df[col] = (
-                df[col].combine_first(current_df[col]) if col in current_df else df[col]
-            )   
-
-        if "step" not in current_df.columns:
-            current_df.reset_index(inplace=True)
-        current_df.to_csv(
+        df.to_csv(
             output_path / f"{output_prefix}_{model_name}_{num_samples}.csv", index=False
         )
 
@@ -467,18 +367,6 @@ if __name__ == "__main__":
         help="Which n-gram orders to collect data for",
     )
     parser.add_argument(
-        "--loss",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--div",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-    )
-    parser.add_argument(
         "--output_prefix",
         "-p",
         default="ngram",
@@ -512,21 +400,21 @@ if __name__ == "__main__":
             2,
             4,
             8,
-            # 16,
+            16,
             32,
             64,
             128,
-            # 256,
+            256,
             512,
-            # 1000,
+            1000,
             2000,
             5000,
-            # 8000,
+            8000,
             16_000,
             33_000,
-            # 66_000,
+            66_000,
             131_000,
-            # 143_000,
+            143_000,
         ],
         nargs="+",
         help="Which model checkpoints to collect data for",
@@ -539,8 +427,5 @@ if __name__ == "__main__":
         args.n,
         args.steps,
         args.output_prefix,
-        args.div,
-        args.loss,
-        args.overwrite,
         args.num_samples
     )

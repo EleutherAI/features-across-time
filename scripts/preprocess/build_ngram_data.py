@@ -2,7 +2,6 @@ import argparse
 import os
 import pickle
 from pathlib import Path
-import token
 
 import numpy as np
 import torch
@@ -138,10 +137,6 @@ class NgramSeqModel:
             dtype=np.float32,
             shape=(len(data) * self.seq_len, vocab_size),
         )
-        # if n == 1:
-        #     unigram_logprobs = self.unigram_probs.log().cpu().repeat(self.seq_len * len(data)).reshape(-1, vocab_size)
-        #     mmap[:] = np.array(unigram_logprobs, dtype=np.float32)
-        #     return
 
         chunk_len = batch_size * self.seq_len
         for i, batch in tqdm(enumerate(data_loader)):
@@ -229,8 +224,7 @@ def main(
     bpb_coeff: float,
     tokens_path: Path,
     tokengrams_paths: list[tuple[str, str]],
-    data_path: Path,
-    smooth: bool = False,
+    data_path: Path
 ):
     if 2 in ngram_orders and not os.path.exists(data_path / "bigrams.pkl"):
         print("Building bigrams...")
@@ -252,21 +246,13 @@ def main(
             k
         )
 
-        # Check sampled sequences look correct
         print(f"{n}-gram sequence sample:\n" + ngram_model.get_sample_strs(n, 1)[0])
 
-        # print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
-        # data = ngram_model.generate_ngrams(n, num_samples)
-        # data_dict = {"input_ids": torch.tensor(data)}
-        # Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences-full-pile-{num_samples}.hf"))
+        print(f"Generating {num_samples} {n}-gram sequences of {k} tokens...")
+        data = ngram_model.generate_ngrams(n, num_samples)
+        data_dict = {"input_ids": torch.tensor(data)}
+        Dataset.from_dict(data_dict).save_to_disk(str(data_path / f"{n}-gram-sequences-full-pile-{num_samples}.hf"))
 
-        # if smooth:
-        #     print(f"Generating smoothed {n}-gram logprobs...")
-        #     pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(
-        #         range(num_samples)
-        #     )
-        #     ngram_model.generate_smoothed_ngram_dists(pile_val, data_path, n)
-        # else:
         print(f"Generating {n}-gram logprobs...")
         pile_val = load_from_disk(str(data_path / "val_tokenized.hf")).select(
             range(num_samples)
@@ -280,7 +266,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--n", default=[3], nargs="+", type=int, 
                         help="N-gram models to sample from")
-    parser.add_argument("--smooth", action="store_true")
     parser.add_argument("--k", default=2049, help="Sample length", type=int)
     parser.add_argument("--num_samples", default=1024, type=int)
     parser.add_argument("--bpb_coeff", default=0.3650388, type=float) # pile
@@ -314,5 +299,4 @@ if __name__ == "__main__":
         Path(args.tokens_path),
         tokengrams_paths,
         Path(args.data_path),
-        args.smooth
     )

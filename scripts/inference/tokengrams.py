@@ -307,7 +307,7 @@ def main(
         )
 
         # Extract out per token loss tensors and make them into a separate dataframe with both
-        # step and token index. don't worry about merging with other dfs etc.
+        # step and token index. 
         # result = []
         # for d in data:
         #     for step_index, step in enumerate(d["step"]):
@@ -408,7 +408,7 @@ if __name__ == "__main__":
             512,
             1000,
             2000,
-            5000,
+            4000,
             8000,
             16_000,
             33_000,

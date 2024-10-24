@@ -1,11 +1,11 @@
 import numpy as np
 
-from scripts.script_utils.dury_distribution import DuryDistribution
+from scripts.script_utils.conrad_distribution import ConradDistribution
 
 
-def test_dury_distribution():
+def test_conrad_distribution():
     mu = np.random.uniform(0, 1, (100, 100))
-    dd = DuryDistribution(mu)
+    dd = ConradDistribution(mu)
     samples = dd.sample(30_000)
 
     assert np.all(np.isfinite(samples))
@@ -14,4 +14,4 @@ def test_dury_distribution():
 
 
 if __name__ == "__main__":
-    test_dury_distribution()
+    test_conrad_distribution()

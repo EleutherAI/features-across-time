@@ -8,8 +8,7 @@ from typing import Callable
 
 import numpy as np
 import torch
-# import torchvision.transforms as T
-# import torchvision.transforms.functional as TF
+import torchvision.transforms as T
 import torchvision.transforms.v2.functional as TF
 from concept_erasure import QuadraticEditor, QuadraticFitter, QuantileNormalizer
 from concept_erasure.utils import assert_type

@@ -8,12 +8,12 @@ NOTE: Apologies for the sloppy code in many places. We plan to clean it up in th
 Run the following Python scripts from the command line to collect and plot data over training steps:
 
 ```
-python scripts/preprocess/generate_ngram_datasets.py --n <n1> <n2>
-python scripts/inference/ngram_steps.py --n <n1> <n2>
+python -m scripts.preprocess.build_ngram_data --n <n1> <n2>
+python -m scripts.inference.ngrams --n <n1> <n2>
 ```
 
 To plot existing data, use:
 
 ```
-python scripts/plot/plot_ngrams.py
+python -m scripts.plot.plot_single_rows
 ```

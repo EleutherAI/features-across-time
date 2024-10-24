@@ -9,9 +9,8 @@ import pandas as pd
 import safetensors
 import torch
 import torchvision.transforms.v2.functional as TF
-# import torchvision.transforms.functional as TF
 from concept_erasure import QuadraticFitter
-# from concept_erasure import QuantileNormalizer
+from concept_erasure import QuantileNormalizer
 from concept_erasure.utils import assert_type
 from datasets import (
     ClassLabel,
@@ -27,7 +26,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers.modeling_outputs import ModelOutput
 
-from scripts.train_vision import (
+from scripts.inference.train_vision import (
     ConceptEditedDataset,
     GaussianMixture,
     IndependentCoordinateSampler,
@@ -93,7 +92,7 @@ def run_dataset(
 
     print("Computing statistics...")
     fitter = QuadraticFitter.fit(X.flatten(1), Y)
-    # normalizer = QuantileNormalizer(X, Y)
+    normalizer = QuantileNormalizer(X, Y)
     print("Done.")
 
     def preprocess(ex):
@@ -136,25 +135,25 @@ def run_dataset(
     ).select(range(len(val))) # type: ignore
 
     ds_variations = {
-        # "maxent": load_from_disk(data_path / f"dury-{dataset_file_str}.hf"),
-        # "shifted": load_from_disk(data_path / f"shifted-{dataset_file_str}.hf"),
-        # "truncated_normal": truncated_normal,
-        # "real": val,
-        # "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
-        # "got": ConceptEditedDataset(class_probs, editor, X, Y),
+        "maxent": load_from_disk(data_path / f"dury-{dataset_file_str}.hf"),
+        "shifted": load_from_disk(data_path / f"shifted-{dataset_file_str}.hf"),
+        "truncated_normal": truncated_normal,
+        "real": val,
+        "independent": IndependentCoordinateSampler(class_probs, normalizer, len(val)),
+        "got": ConceptEditedDataset(class_probs, editor, X, Y),
         "third_order": load_from_disk(
             str(data_path / f"third-order-{dataset_file_str}.hf")
         ),
-        # "gaussian": gaussian,
-        # "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
+        "gaussian": gaussian,
+        "cqn": QuantileNormalizedDataset(class_probs, normalizer, X, Y),
     }
 
     for ds_name in [
         "third_order",
-        # "maxent",
-        # "shifted",
-        # "real",
-        # "truncated_normal",
+        "maxent",
+        "shifted",
+        "real",
+        "truncated_normal",
     ]:
         ds_variations[ds_name].set_format("torch", columns=["pixel_values", label_col])
 

@@ -3,7 +3,7 @@ from scipy.optimize import newton
 import numpy as np
 
 
-class DuryDistribution:
+class ConradDistribution:
     """Sample from p = exp(-a - b * x) in range [0, 1].
     
     # Derivations for helper equations

@@ -13,7 +13,7 @@ from einops import rearrange
 from torch import Tensor
 from tqdm import tqdm
 
-from scripts.script_utils.dury_distribution import DuryDistribution
+from scripts.script_utils.conrad_distribution import ConradDistribution
 from scripts.script_utils.truncated_normal import truncated_normal
 
 
@@ -79,7 +79,7 @@ def truncated_normal_ds_with_moments(
 
 
 def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
-    output_path.mkdirs(exist_ok=True, parents=True)
+    output_path.mkdir(exist_ok=True, parents=True)
 
     # Seed everything
     np.random.seed(seed)
@@ -242,15 +242,13 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
             str(output_path / f'shifted-{dataset_str.replace("/", "--")}.hf')
         )
 
-    # mean_shifted_ds()
-
-    def dury_ds():
-        print("Generating Dury distribution maximum entropy data...")
+    def conrad_ds():
+        print("Generating Conrad distribution maximum entropy data...")
         X = []
         Y = []
         for label, original_data in tqdm(class_data.items()):
             mu = mus[label].numpy()
-            dd = DuryDistribution(mu)
+            dd = ConradDistribution(mu)
             data = dd.sample(len(original_data))
             X.append(torch.tensor(data, dtype=torch.float))
             Y.extend([label] * len(original_data))
@@ -259,8 +257,6 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
         Dataset.from_dict(data_dict).shuffle(seed).save_to_disk(
             str(output_path / f'dury-{dataset_str.replace("/", "--")}.hf')
         )
-
-    # dury_ds()
 
     def truncated_normal_ds():
         print("Generating truncated normal maximum entropy data...")
@@ -293,7 +289,9 @@ def build_from_dataset(dataset_str: str, output_path: Path, seed: int):
             str(output_path / f'truncated-normal-{dataset_str.replace("/", "--")}.hf')
         )
 
-    # truncated_normal_ds()
+    mean_shifted_ds()
+    conrad_ds()
+    truncated_normal_ds()
 
 
 def main():
